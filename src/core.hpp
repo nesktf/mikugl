@@ -1,11 +1,17 @@
 #pragma once
 
 #define MIKU_UNUSED(thing) (void)thing
-#define miku_assert assert
+#define miku_assert        assert
 
 #include <cassert>
 #include <cstdint>
+#include <memory>
+#include <span>
 #include <vector>
+
+#include <ntf/core.hpp>
+#include <ntf/expected.hpp>
+#include <ntf/unique.hpp>
 
 namespace mikugl {
 
@@ -31,6 +37,21 @@ static_assert(sizeof(f64) == 8);
 template<typename T>
 using Vec = std::vector<T>;
 
+template<typename T, typename E>
+using Expected = ::ntf::Expected<T, E>;
+
+template<typename E>
+using Unexpected = ::ntf::unexpected<E>;
+
+template<typename T>
+using UniqueArray = ::ntf::UniqueArray<T>;
+
+template<typename T>
+using Span = std::span<T>;
+
+template<typename T, typename Deleter = std::default_delete<T>>
+using UniquePtr = std::unique_ptr<T, Deleter>;
+
 // TODO: update ntfstl DeferFn with this
 template<typename Fn>
 class DeferFn {
@@ -52,6 +73,7 @@ public:
     }
     _engaged = false;
   }
+
   constexpr void operator()() noexcept { invoke(); }
 
   constexpr void disengage() noexcept { _engaged = false; }
