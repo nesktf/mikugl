@@ -1,0 +1,9 @@
+[submodule "lib/mmdgltf"]
+	path = lib/mmdgltf
+	url = https://github.com/nesktf/mmdgltf.git
+[submodule "lib/ranmath"]
+	path = lib/ranmath
+	url = https://github.com/nesktf/ranmath.git
+[submodule "lib/imgui"]
+	path = lib/imgui
+	url = https://github.com/ocornut/imgui.git
