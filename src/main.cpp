@@ -1,5 +1,7 @@
 #include "core.hpp"
 #include "core/command_stack.hpp"
+#include "render/grid.hpp"
+#include "scene/camera.hpp"
 #include "ui/theme.hpp"
 
 #include <SDL_video.h>
@@ -90,13 +92,24 @@ int main(int argc, char* argv[]) {
 
   init_imgui(win, gl, main_scale);
 
+  auto grid = Grid::create();
+  if (!grid) {
+    fprintf(stderr, "Failed to initialize grid renderer\n");
+    return 1;
+  }
+
+  MmdCamera camera{};
   CommandStack command_stack{};
+
   bool should_exit = false;
   bool show_scene_panel = true;
   bool show_bone_panel = true;
   bool show_inspector_panel = true;
   bool show_timeline_panel = true;
   bool show_demo_window = false;
+
+  bool is_right_dragging = false;
+  bool is_middle_dragging = false;
 
   const ImGuiIO& io = ImGui::GetIO();
   while (!should_exit) {
@@ -110,9 +123,46 @@ int main(int argc, char* argv[]) {
           e.window.windowID == SDL_GetWindowID(win)) {
         should_exit = true;
       }
+
+      if (e.type == SDL_MOUSEBUTTONDOWN) {
+        if (!io.WantCaptureMouse) {
+          if (e.button.button == SDL_BUTTON_RIGHT) {
+            is_right_dragging = true;
+          } else if (e.button.button == SDL_BUTTON_MIDDLE) {
+            is_middle_dragging = true;
+          }
+        }
+      }
+
+      if (e.type == SDL_MOUSEBUTTONUP) {
+        if (e.button.button == SDL_BUTTON_RIGHT) {
+          is_right_dragging = false;
+        } else if (e.button.button == SDL_BUTTON_MIDDLE) {
+          is_middle_dragging = false;
+        }
+      }
+
+      if (e.type == SDL_MOUSEMOTION) {
+        if (is_right_dragging) {
+          camera.orbit(static_cast<f32>(e.motion.xrel), static_cast<f32>(e.motion.yrel));
+        } else if (is_middle_dragging) {
+          camera.pan(static_cast<f32>(e.motion.xrel), static_cast<f32>(e.motion.yrel));
+        }
+      }
+
+      if (e.type == SDL_MOUSEWHEEL) {
+        if (!io.WantCaptureMouse) {
+          camera.zoom(static_cast<f32>(e.wheel.y));
+        }
+      }
+
       if (e.type == SDL_KEYDOWN) {
         if (e.key.keysym.sym == SDLK_ESCAPE) {
           should_exit = true;
+        }
+
+        if (e.key.keysym.sym == SDLK_HOME) {
+          camera.reset();
         }
 
         const bool ctrl = (SDL_GetModState() & KMOD_CTRL) != 0;
@@ -169,6 +219,10 @@ int main(int argc, char* argv[]) {
       }
 
       if (ImGui::BeginMenu("View")) {
+        if (ImGui::MenuItem("Reset Camera", "Home")) {
+          camera.reset();
+        }
+        ImGui::Separator();
         ImGui::MenuItem("Scene Nodes", nullptr, &show_scene_panel);
         ImGui::MenuItem("Bone Hierarchy", nullptr, &show_bone_panel);
         ImGui::MenuItem("Inspector", nullptr, &show_inspector_panel);
@@ -219,11 +273,18 @@ int main(int argc, char* argv[]) {
 
     ImGui::Render();
 
-    glViewport(0, 0, static_cast<i32>(io.DisplaySize.x), static_cast<i32>(io.DisplaySize.y));
+    const f32 display_w = io.DisplaySize.x;
+    const f32 display_h = io.DisplaySize.y;
+    glViewport(0, 0, static_cast<i32>(display_w), static_cast<i32>(display_h));
     glClearColor(0.18f, 0.18f, 0.19f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // TODO: Render 3D ground grid and camera viewport to backbuffer
+    const f32 aspect = (display_h > 0.0f) ? (display_w / display_h) : 1.0f;
+    const ran::Mat4f32 view = camera.compute_view_matrix();
+    const ran::Mat4f32 proj = camera.compute_projection_matrix(aspect);
+
+    grid->render(view, proj);
+
     // TODO: Render MMD models to backbuffer
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
