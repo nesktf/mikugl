@@ -10,3 +10,6 @@
 [submodule "lib/imguizmo"]
 	path = lib/imguizmo
 	url = https://github.com/CedricGuillemet/ImGuizmo.git
+[submodule "lib/ntfstl"]
+	path = lib/ntfstl
+	url = https://github.com/nesktf/ntfstl.git
