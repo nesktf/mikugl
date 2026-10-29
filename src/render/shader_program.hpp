@@ -34,7 +34,7 @@ public:
 public:
   u32 id() const noexcept { return _program_id; }
 
-  bool moved_from() const noexcept { return _program_id != 0; }
+  bool moved_from() const noexcept { return _program_id == 0; }
 
 public:
   void set_uniform_mat4(std::string_view name, const ran::Mat4f32& mat) const noexcept;

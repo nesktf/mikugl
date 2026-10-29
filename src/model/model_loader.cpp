@@ -195,6 +195,29 @@ Expected<ModelData, ModelLoadError> ModelLoader::load_file(std::string_view path
     }
   }
 
+  if (const auto bones = model->bones(); bones && !bones->empty()) {
+    result->bones.reserve(bones->size());
+    for (const auto& b : *bones) {
+      ModelBone mb{};
+      if (b.name_en && b.name_en[0] != '\0') {
+        mb.name_en = b.name_en;
+      }
+      if (b.name_jp && b.name_jp[0] != '\0') {
+        mb.name_jp = b.name_jp;
+      }
+      mb.position = ran::Vec3f32{b.position.x, b.position.y, b.position.z};
+      mb.parent_index = b.parent_index;
+      mb.transform_order = b.transform_order;
+      mb.flags = b.flags;
+      mb.offset = ran::Vec3f32{b.offset.x, b.offset.y, b.offset.z};
+      mb.connection_bone_index = b.connection_bone_index;
+      mb.ik_target_index = b.ik_target_index;
+      mb.ik_loop_count = b.ik_loop_count;
+      mb.ik_limit_angle = b.ik_limit_angle;
+      result->bones.push_back(std::move(mb));
+    }
+  }
+
   return result;
 }
 

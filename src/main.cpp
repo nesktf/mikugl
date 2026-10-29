@@ -1,7 +1,9 @@
+#include "animation/skeleton.hpp"
 #include "core.hpp"
 #include "core/command_stack.hpp"
 #include "model/async_loader.hpp"
 #include "model/model_data.hpp"
+#include "render/debug_draw.hpp"
 #include "render/gl_mesh.hpp"
 #include "render/grid.hpp"
 #include "render/shader_program.hpp"
@@ -50,6 +52,33 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+std::string find_asset_font(std::string_view font_name) {
+  const std::string rel_path = std::string("data/fonts/") + std::string(font_name);
+  const std::string bin_path =
+#ifdef MIKU_DATA_DIR
+    std::string(MIKU_DATA_DIR "/fonts/") + std::string(font_name);
+#else
+    "";
+#endif
+  const std::string imgui_path = std::string("lib/imgui/misc/fonts/") + std::string(font_name);
+  const std::string sys_path =
+    std::string("/usr/share/fonts/google-droid-sans-fonts/") + std::string(font_name);
+
+  const auto candidates = std::to_array<std::string_view>({
+    rel_path,
+    bin_path,
+    imgui_path,
+    sys_path,
+  });
+
+  for (const auto& path : candidates) {
+    if (!path.empty() && stdfs::exists(path)) {
+      return std::string(path);
+    }
+  }
+  return "";
+}
+
 void init_imgui(SDL_Window* window, SDL_GLContext gl_context, f32 main_scale) {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -64,7 +93,23 @@ void init_imgui(SDL_Window* window, SDL_GLContext gl_context, f32 main_scale) {
 
   ImGuiStyle& style = ImGui::GetStyle();
   style.ScaleAllSizes(main_scale);
-  style.FontScaleDpi = main_scale;
+
+  const f32 font_size = 16.0f * (main_scale > 0.0f ? main_scale : 1.0f);
+  const std::string base_font = find_asset_font("DroidSans.ttf");
+  const std::string jp_font = find_asset_font("DroidSansJapanese.ttf");
+
+  if (!base_font.empty()) {
+    io.Fonts->AddFontFromFileTTF(base_font.c_str(), font_size);
+  } else {
+    io.Fonts->AddFontDefault();
+  }
+
+  if (!jp_font.empty()) {
+    ImFontConfig config;
+    config.MergeMode = true;
+    io.Fonts->AddFontFromFileTTF(jp_font.c_str(), font_size, &config,
+                                 io.Fonts->GetGlyphRangesJapanese());
+  }
 
   ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
   ImGui_ImplOpenGL3_Init(nullptr);
@@ -168,15 +213,21 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  ToonManager toon_manager;
-  toon_manager.init();
-
-  ShadowMap shadow_map;
-  shadow_map.init();
+  auto toon_manager = ToonManager::create();
+  auto shadow_map = ShadowMap::create();
+  auto debug_draw = DebugDraw::create();
+  if (!debug_draw) {
+    fprintf(stderr, "Failed to initialize debug draw renderer\n");
+    return 1;
+  }
 
   GlMesh gl_mesh;
-  TextureManager texture_manager;
-  texture_manager.init();
+  auto texture_manager = TextureManager::create();
+
+  Optional<Skeleton> skeleton;
+  bool show_skeleton = true;
+  f32 test_arm_pose = 0.0f;
+  i32 selected_bone_idx = -1;
 
   Vec<ModelSubmesh> model_submeshes;
   Vec<ModelMaterial> model_materials;
@@ -274,10 +325,13 @@ int main(int argc, char* argv[]) {
       if (*result) {
         ModelData& data = **result;
         loaded_model_name = data.name.empty() ? "MMD Model" : std::move(data.name);
+        skeleton = Skeleton::from_model_bones(data.bones).value();
         gl_mesh.upload(data.vertices, data.indices);
         texture_manager.upload_textures(data.textures);
         model_submeshes = std::move(data.submeshes);
         model_materials = std::move(data.materials);
+        test_arm_pose = 0.0f;
+        selected_bone_idx = -1;
       } else {
         const auto path = async_loader.current_path();
         fprintf(stderr, "Failed to load model: %.*s\n", (int)path.size(), path.data());
@@ -361,8 +415,50 @@ int main(int argc, char* argv[]) {
 
     if (show_bone_panel) {
       if (ImGui::Begin("Bone Hierarchy", &show_bone_panel)) {
-        ImGui::TextDisabled("Bone list");
-        // TODO: Populate bone tree and visibility toggles
+        ImGui::Checkbox("Show Skeleton Overlay", &show_skeleton);
+        ImGui::Separator();
+        if (skeleton) {
+          ImGui::Text("Total Bones: %u", skeleton->bone_count());
+          if (ImGui::Button("Reset Pose")) {
+            test_arm_pose = 0.0f;
+            skeleton->reset_pose();
+          }
+          ImGui::SameLine();
+          if (ImGui::SliderFloat("Arm Pose Test", &test_arm_pose, -90.0f, 90.0f, "%.1f deg")) {
+            const i32 left_arm = skeleton->find_bone_index("左腕");
+            const i32 right_arm = skeleton->find_bone_index("右腕");
+            if (left_arm >= 0) {
+              skeleton->set_bone_rotation(
+                static_cast<u32>(left_arm),
+                ran::to_quat(ran::rad(-test_arm_pose), ran::Vec3f32{0.0f, 0.0f, 1.0f}));
+            }
+            if (right_arm >= 0) {
+              skeleton->set_bone_rotation(
+                static_cast<u32>(right_arm),
+                ran::to_quat(ran::rad(test_arm_pose), ran::Vec3f32{0.0f, 0.0f, 1.0f}));
+            }
+            skeleton->update_fk();
+          }
+
+          ImGui::Separator();
+          if (ImGui::BeginChild("BoneList", ImVec2(0, 0), true)) {
+            const auto bones = skeleton->bones();
+            for (u32 i = 0; i < bones.size(); ++i) {
+              const auto& b = bones[i];
+              const bool is_sel = (selected_bone_idx == static_cast<i32>(i));
+              std::string label = b.name_en.empty() ? b.name_jp : b.name_en;
+              if (label.empty()) {
+                label = "Bone_" + std::to_string(i);
+              }
+              if (ImGui::Selectable(label.c_str(), is_sel)) {
+                selected_bone_idx = static_cast<i32>(i);
+              }
+            }
+            ImGui::EndChild();
+          }
+        } else {
+          ImGui::TextDisabled("No skeleton loaded");
+        }
       }
       ImGui::End();
     }
@@ -403,6 +499,10 @@ int main(int argc, char* argv[]) {
     const auto [light_view, light_proj] =
       shadow_map.compute_light_matrices(camera.target(), light_dir);
     const ran::Mat4f32 light_view_proj = light_proj * light_view;
+    if (skeleton) {
+      skeleton->update_ubo();
+      skeleton->bind_ubo(2);
+    }
 
     if (gl_mesh.is_valid()) {
       glEnable(GL_DEPTH_TEST);
@@ -412,6 +512,7 @@ int main(int argc, char* argv[]) {
       shadow_shader->set_uniform_mat4("u_model", ran::Mat4f32::identity());
       shadow_shader->set_uniform_mat4("u_light_view", light_view);
       shadow_shader->set_uniform_mat4("u_light_proj", light_proj);
+      shadow_shader->set_uniform_int("u_skinning_enabled", (i32)skeleton.has_value());
       gl_mesh.bind();
       for (const auto& sm : model_submeshes) {
         gl_mesh.draw_submesh(sm.index_offset, sm.index_count);
@@ -439,6 +540,7 @@ int main(int argc, char* argv[]) {
       mmd_shader->set_uniform_vec3("u_light_dir", light_dir);
       mmd_shader->set_uniform_vec3("u_light_color", light_color);
       mmd_shader->set_uniform_vec3("u_camera_pos", camera.compute_position());
+      mmd_shader->set_uniform_int("u_skinning_enabled", (i32)skeleton.has_value());
       shadow_map.bind_texture(3);
       mmd_shader->set_uniform_int("u_has_shadow", 1);
       gl_mesh.bind();
@@ -493,6 +595,7 @@ int main(int argc, char* argv[]) {
       outline_shader->set_uniform_mat4("u_view", view);
       outline_shader->set_uniform_mat4("u_proj", proj);
       outline_shader->set_uniform_vec2("u_viewport_size", ran::Vec2f32{display_w, display_h});
+      outline_shader->set_uniform_int("u_skinning_enabled", (i32)skeleton.has_value());
       gl_mesh.bind();
 
       for (const auto& sm : model_submeshes) {
@@ -509,6 +612,10 @@ int main(int argc, char* argv[]) {
       glCullFace(GL_BACK);
       glDisable(GL_CULL_FACE);
       ShaderProgram::unbind();
+
+      if (show_skeleton && skeleton) {
+        (*debug_draw).begin(proj * view).draw_skeleton(*skeleton, selected_bone_idx).render();
+      }
     }
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

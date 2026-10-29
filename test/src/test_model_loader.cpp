@@ -50,6 +50,16 @@ TEST_CASE("ModelLoader default PMD model loading", "[model_loader]") {
   }
 
   REQUIRE(total_submesh_indices == model.indices.size());
+
+  REQUIRE(model.bones.size() == 140);
+  REQUIRE(model.bones[40].name_jp == "左足");
+  REQUIRE(model.bones[41].name_jp == "左ひざ");
+  REQUIRE(model.bones[42].name_jp == "左足首");
+  REQUIRE(model.bones[84].name_jp == "左つま先");
+  REQUIRE(model.bones[89].name_jp == "左足ＩＫ");
+  REQUIRE(model.bones[91].name_jp == "左つま先ＩＫ");
+  REQUIRE(model.bones[89].name_en == "leg IK_L");
+  REQUIRE(model.bones[91].name_en == "toe IK_L");
 }
 
 TEST_CASE("AsyncLoader asynchronous polling", "[async_loader]") {

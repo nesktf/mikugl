@@ -7,13 +7,14 @@
 
 #include <filesystem>
 
+using namespace mikugl;
+
 TEST_CASE("ShadowMap light matrix calculations", "[shadow_map]") {
-  const mikugl::ShadowMap shadow_map{};
   const ran::Vec3f32 target{0.0f, 10.0f, 0.0f};
   const ran::Vec3f32 light_dir{0.5f, 1.0f, 0.7f};
 
   const auto [light_view, light_proj] =
-    shadow_map.compute_light_matrices(target, light_dir, 30.0f);
+    ShadowMap::compute_light_matrices(target, light_dir, 30.0f);
 
   // target in world space should have x=0, y=0 in light eye space
   const ran::Vec4f32 target_eye = light_view * ran::Vec4f32{target.x, target.y, target.z, 1.0f};
@@ -30,7 +31,7 @@ TEST_CASE("ShadowMap light matrix calculations", "[shadow_map]") {
 }
 
 TEST_CASE("ToonManager assets existence", "[toon_manager]") {
-  REQUIRE(mikugl::ToonManager::shared_toon_count == 10);
+  REQUIRE(ToonManager::shared_toon_count == 10);
 
   const std::string candidate_dirs[] = {
     "data",
@@ -56,7 +57,7 @@ TEST_CASE("ToonManager assets existence", "[toon_manager]") {
 }
 
 TEST_CASE("ModelMaterial sphere and toon properties", "[model_material]") {
-  mikugl::ModelMaterial mat{};
+  ModelMaterial mat{};
   mat.sphere_mode = 1; // multiplicative .sph
   mat.toon_sharing_flag = 1;
   mat.toon_index = 0;

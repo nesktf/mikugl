@@ -50,6 +50,20 @@ struct TextureCpuBuffer {
   bool valid;
 };
 
+struct ModelBone {
+  std::string name_en;
+  std::string name_jp;
+  ran::Vec3f32 position;
+  i32 parent_index;
+  i32 transform_order;
+  u16 flags;
+  ran::Vec3f32 offset;
+  i32 connection_bone_index;
+  i32 ik_target_index;
+  i32 ik_loop_count;
+  f32 ik_limit_angle;
+};
+
 struct ModelData {
   std::string name;
   Vec<ModelVertex> vertices;
@@ -57,6 +71,7 @@ struct ModelData {
   Vec<ModelSubmesh> submeshes;
   Vec<ModelMaterial> materials;
   Vec<TextureCpuBuffer> textures;
+  Vec<ModelBone> bones;
 };
 
 enum class ModelLoadError : u8 {

@@ -61,8 +61,8 @@ using Optional = std::optional<T>;
 using ::ntf::make_unique_array;
 using ::ntf::uninitialized;
 
-template<typename T>
-using Span = std::span<T>;
+template<typename T, size_t Extent = std::dynamic_extent>
+using Span = std::span<T, Extent>;
 
 template<typename T, typename Deleter = std::default_delete<T>>
 using UniquePtr = std::unique_ptr<T, Deleter>;

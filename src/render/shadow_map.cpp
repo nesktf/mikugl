@@ -4,53 +4,16 @@
 
 namespace mikugl {
 
-ShadowMap::ShadowMap() noexcept : _fbo(0), _depth_texture(0), _resolution(0) {}
-
-ShadowMap::~ShadowMap() noexcept {
-  destroy();
-}
-
-ShadowMap::ShadowMap(ShadowMap&& other) noexcept :
-    _fbo(std::exchange(other._fbo, 0)), _depth_texture(std::exchange(other._depth_texture, 0)),
-    _resolution(std::exchange(other._resolution, 0)) {}
-
-ShadowMap& ShadowMap::operator=(ShadowMap&& other) noexcept {
-  if (this != &other) {
-    destroy();
-    _fbo = std::exchange(other._fbo, 0);
-    _depth_texture = std::exchange(other._depth_texture, 0);
-    _resolution = std::exchange(other._resolution, 0);
-  }
-  return *this;
-}
-
-void ShadowMap::destroy() noexcept {
-  if (_depth_texture) {
-    GLuint tex = _depth_texture;
-    glDeleteTextures(1, &tex);
-    _depth_texture = 0;
-  }
-  if (_fbo) {
-    GLuint fbo = _fbo;
-    glDeleteFramebuffers(1, &fbo);
-    _fbo = 0;
-  }
-  _resolution = 0;
-}
-
-void ShadowMap::init(u32 resolution) {
-  destroy();
-
-  _resolution = resolution;
-
+ShadowMap ShadowMap::create(u32 resolution) {
   GLuint fbo = 0;
   GLuint depth_texture = 0;
   glGenFramebuffers(1, &fbo);
   glGenTextures(1, &depth_texture);
+  miku_assert(fbo && depth_texture); // handle errors later
 
   glBindTexture(GL_TEXTURE_2D, depth_texture);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, static_cast<GLsizei>(_resolution),
-               static_cast<GLsizei>(_resolution), 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, static_cast<GLsizei>(resolution),
+               static_cast<GLsizei>(resolution), 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
 
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -72,8 +35,42 @@ void ShadowMap::init(u32 resolution) {
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glBindTexture(GL_TEXTURE_2D, 0);
 
-  _fbo = (u32)fbo;
-  _depth_texture = (u32)depth_texture;
+  return {create_t(), (u32)fbo, (u32)depth_texture, resolution};
+}
+
+void ShadowMap::_destroy() noexcept {
+  if (_depth_texture) {
+    GLuint tex = _depth_texture;
+    glDeleteTextures(1, &tex);
+    _depth_texture = 0;
+  }
+  if (_fbo) {
+    GLuint fbo = _fbo;
+    glDeleteFramebuffers(1, &fbo);
+    _fbo = 0;
+  }
+  _resolution = 0;
+}
+
+ShadowMap::ShadowMap(create_t, u32 fbo, u32 depth, u32 resolution) noexcept :
+    _fbo(fbo), _depth_texture(depth), _resolution(resolution) {}
+
+ShadowMap::~ShadowMap() noexcept {
+  _destroy();
+}
+
+ShadowMap::ShadowMap(ShadowMap&& other) noexcept :
+    _fbo(std::exchange(other._fbo, 0)), _depth_texture(std::exchange(other._depth_texture, 0)),
+    _resolution(std::exchange(other._resolution, 0)) {}
+
+ShadowMap& ShadowMap::operator=(ShadowMap&& other) noexcept {
+  if (this != &other) {
+    _destroy();
+    _fbo = std::exchange(other._fbo, 0);
+    _depth_texture = std::exchange(other._depth_texture, 0);
+    _resolution = std::exchange(other._resolution, 0);
+  }
+  return *this;
 }
 
 void ShadowMap::bind_fbo() const noexcept {
@@ -97,7 +94,7 @@ void ShadowMap::bind_texture(u32 slot) const noexcept {
 }
 
 auto ShadowMap::compute_light_matrices(const ran::Vec3f32& target, const ran::Vec3f32& light_dir,
-                                       f32 box_extent) const noexcept -> LightMat {
+                                       f32 box_extent) noexcept -> LightMat {
   static constexpr f32 light_distance = 50.0f;
   const auto norm_dir = ran::normalize(light_dir);
   const auto light_pos = target + norm_dir * light_distance;

@@ -51,7 +51,7 @@ Grid& Grid::operator=(Grid&& other) noexcept {
 
 void Grid::render(const ran::Mat4f32& view, const ran::Mat4f32& proj,
                   const ran::Mat4f32& light_view_proj, bool has_shadow) const noexcept {
-  if (!_vao || !_shader.moved_from()) {
+  if (!_vao || _shader.moved_from()) {
     return;
   }
 

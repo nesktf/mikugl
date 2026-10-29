@@ -34,40 +34,8 @@ stdfs::path find_toon_file(std::string_view filename) {
 
 } // namespace
 
-ToonManager::ToonManager() noexcept : _toon_textures{} {
-  _toon_textures.fill(0);
-}
-
-ToonManager::~ToonManager() noexcept {
-  destroy();
-}
-
-ToonManager::ToonManager(ToonManager&& other) noexcept : _toon_textures(other._toon_textures) {
-  other._toon_textures.fill(0);
-}
-
-ToonManager& ToonManager::operator=(ToonManager&& other) noexcept {
-  if (this != &other) {
-    destroy();
-    _toon_textures = other._toon_textures;
-    other._toon_textures.fill(0);
-  }
-  return *this;
-}
-
-void ToonManager::destroy() noexcept {
-  for (auto& tex : _toon_textures) {
-    if (tex != 0) {
-      GLuint t = tex;
-      glDeleteTextures(1, &t);
-      tex = 0;
-    }
-  }
-}
-
-void ToonManager::init() {
-  destroy();
-
+ToonManager ToonManager::create() {
+  std::array<u32, shared_toon_count> textures{};
   for (size_t i = 0; i < shared_toon_count; ++i) {
     const auto filename = fmt::format("toon{:02d}.bmp", i + 1);
     const auto full_path = find_toon_file(filename);
@@ -89,6 +57,7 @@ void ToonManager::init() {
 
     GLuint tex_id = 0;
     glGenTextures(1, &tex_id);
+    miku_assert(tex_id); // handle errors later
     glBindTexture(GL_TEXTURE_2D, tex_id);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -99,8 +68,40 @@ void ToonManager::init() {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 
     glBindTexture(GL_TEXTURE_2D, 0);
-    _toon_textures[i] = (u32)tex_id;
+    textures[i] = (u32)tex_id;
   }
+  return {create_t(), textures};
+}
+
+void ToonManager::_destroy() noexcept {
+  for (auto& tex : _toon_textures) {
+    if (tex != 0) {
+      GLuint t = tex;
+      glDeleteTextures(1, &t);
+      tex = 0;
+    }
+  }
+}
+
+ToonManager::ToonManager(create_t, Span<const u32, shared_toon_count> textures) noexcept {
+  std::memcpy(_toon_textures.data(), textures.data(), textures.size_bytes());
+}
+
+ToonManager::~ToonManager() noexcept {
+  _destroy();
+}
+
+ToonManager::ToonManager(ToonManager&& other) noexcept : _toon_textures(other._toon_textures) {
+  other._toon_textures.fill(0);
+}
+
+ToonManager& ToonManager::operator=(ToonManager&& other) noexcept {
+  if (this != &other) {
+    _destroy();
+    _toon_textures = other._toon_textures;
+    other._toon_textures.fill(0);
+  }
+  return *this;
 }
 
 void ToonManager::bind_shared_toon(u8 index, u32 slot) const noexcept {

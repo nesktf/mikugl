@@ -6,38 +6,10 @@
 
 namespace mikugl {
 
-TextureManager::TextureManager() noexcept : _missing_texture(0), _textures() {}
-
-TextureManager::~TextureManager() noexcept {
-  clear();
-  if (_missing_texture) {
-    glDeleteTextures(1, &_missing_texture);
-  }
-}
-
-TextureManager::TextureManager(TextureManager&& other) noexcept :
-    _missing_texture(std::exchange(other._missing_texture, 0)),
-    _textures(std::move(other._textures)) {}
-
-TextureManager& TextureManager::operator=(TextureManager&& other) noexcept {
-  if (this != &other) {
-    clear();
-    if (_missing_texture) {
-      glDeleteTextures(1, &_missing_texture);
-    }
-    _missing_texture = std::exchange(other._missing_texture, 0);
-    _textures = std::move(other._textures);
-  }
-  return *this;
-}
-
-void TextureManager::init() {
-  if (_missing_texture) {
-    return;
-  }
-
+TextureManager TextureManager::create() {
   GLuint tex = 0;
   glGenTextures(1, &tex);
+  miku_assert(tex); // handle errors later
   glBindTexture(GL_TEXTURE_2D, tex);
 
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -49,17 +21,46 @@ void TextureManager::init() {
                missing_texture.data());
 
   glBindTexture(GL_TEXTURE_2D, 0);
-  _missing_texture = (u32)tex;
+  return {create_t(), (u32)tex};
+}
+
+void TextureManager::_destroy() noexcept {
+  clear();
+  if (_missing_texture) {
+    GLuint t = _missing_texture;
+    glDeleteTextures(1, &t);
+  }
+}
+
+void TextureManager::clear() noexcept {
+  if (!_textures.empty()) {
+    glDeleteTextures((GLsizei)_textures.size(), _textures.data());
+  }
+  _textures.clear();
+}
+
+TextureManager::TextureManager(create_t, u32 missing) noexcept :
+    _missing_texture(missing), _textures() {}
+
+TextureManager::~TextureManager() noexcept {
+  _destroy();
+}
+
+TextureManager::TextureManager(TextureManager&& other) noexcept :
+    _missing_texture(std::exchange(other._missing_texture, 0)),
+    _textures(std::move(other._textures)) {}
+
+TextureManager& TextureManager::operator=(TextureManager&& other) noexcept {
+  if (this != &other) {
+    _missing_texture = std::exchange(other._missing_texture, 0);
+    _textures = std::move(other._textures);
+  }
+  return *this;
 }
 
 void TextureManager::upload_textures(Span<const TextureCpuBuffer> textures) {
   clear();
-
-  if (!_missing_texture) {
-    init();
-  }
-
-  _textures.resize(textures.size(), 0);
+  _textures.reserve(textures.size());
 
   for (size_t i = 0; i < textures.size(); ++i) {
     const TextureCpuBuffer& buf = textures[i];
@@ -68,9 +69,10 @@ void TextureManager::upload_textures(Span<const TextureCpuBuffer> textures) {
       continue;
     }
 
-    GLuint tex_id = 0;
-    glGenTextures(1, &tex_id);
-    glBindTexture(GL_TEXTURE_2D, tex_id);
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    miku_assert(tex); // handle errors later
+    glBindTexture(GL_TEXTURE_2D, tex);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
@@ -82,7 +84,7 @@ void TextureManager::upload_textures(Span<const TextureCpuBuffer> textures) {
 
     glGenerateMipmap(GL_TEXTURE_2D);
 
-    _textures[i] = tex_id;
+    _textures.emplace_back((u32)tex);
   }
 
   glBindTexture(GL_TEXTURE_2D, 0);
@@ -100,15 +102,6 @@ void TextureManager::bind_texture(i32 texture_index, u32 slot) const noexcept {
   }
 
   glBindTexture(GL_TEXTURE_2D, target);
-}
-
-void TextureManager::clear() noexcept {
-  for (const GLuint tex : _textures) {
-    if (tex != 0) {
-      glDeleteTextures(1, &tex);
-    }
-  }
-  _textures.clear();
 }
 
 bool TextureManager::has_texture(i32 texture_index) const noexcept {
