@@ -1,8 +1,14 @@
-#include "core.hpp"
 #include "core/command_stack.hpp"
+#include "model/async_loader.hpp"
+#include "model/model_data.hpp"
+#include "render/gl_mesh.hpp"
 #include "render/grid.hpp"
+#include "render/shader_program.hpp"
+#include "render/texture_manager.hpp"
 #include "scene/camera.hpp"
+#include "ui/loading_indicator.hpp"
 #include "ui/theme.hpp"
+#include <embedded_shaders.hpp>
 
 #include <SDL_video.h>
 #include <glad/glad.h>
@@ -14,8 +20,10 @@
 #include <imgui_impl_sdl2.h>
 
 #include <cstdio>
+#include <filesystem>
 
 using namespace mikugl;
+namespace stdfs = std::filesystem;
 
 namespace {
 
@@ -29,7 +37,7 @@ void init_imgui(SDL_Window* window, SDL_GLContext gl_context, f32 main_scale) {
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-  apply_imgui_dark_theme();
+  Theme::apply_dark_theme();
 
   ImGuiStyle& style = ImGui::GetStyle();
   style.ScaleAllSizes(main_scale);
@@ -37,6 +45,26 @@ void init_imgui(SDL_Window* window, SDL_GLContext gl_context, f32 main_scale) {
 
   ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
   ImGui_ImplOpenGL3_Init(nullptr);
+}
+
+std::string find_default_model_path() {
+  const auto candidate_paths = std::to_array<std::string_view>({
+    "models/default/Miku_Hatsune_Ver2.pmd",
+#ifdef MIKU_DEFAULT_MODEL_DIR
+    MIKU_DEFAULT_MODEL_DIR "/Miku_Hatsune_Ver2.pmd",
+#endif
+#ifdef MIKU_MMDGLTF_MODEL_DIR
+    MIKU_MMDGLTF_MODEL_DIR "/default/Miku_Hatsune_Ver2.pmd",
+#endif
+    "lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
+  });
+
+  for (const auto& path : candidate_paths) {
+    if (stdfs::exists(path)) {
+      return std::string(path);
+    }
+  }
+  return std::string(candidate_paths.front());
 }
 
 } // namespace
@@ -98,6 +126,24 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  auto mesh_shader = ShaderProgram::create(shaders::k_basic_mesh_vert, shaders::k_basic_mesh_frag);
+  if (!mesh_shader) {
+    fprintf(stderr, "Failed to initialize mesh shader\n");
+    return 1;
+  }
+
+  GlMesh gl_mesh;
+  TextureManager texture_manager;
+  texture_manager.init();
+
+  Vec<ModelSubmesh> model_submeshes;
+  Vec<ModelMaterial> model_materials;
+  std::string loaded_model_name;
+
+  AsyncLoader async_loader;
+  const auto default_model_path = find_default_model_path();
+  async_loader.request_load(default_model_path);
+
   MmdCamera camera{};
   CommandStack command_stack{};
 
@@ -126,9 +172,11 @@ int main(int argc, char* argv[]) {
 
       if (e.type == SDL_MOUSEBUTTONDOWN) {
         if (!io.WantCaptureMouse) {
+          const bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
           if (e.button.button == SDL_BUTTON_RIGHT) {
             is_right_dragging = true;
-          } else if (e.button.button == SDL_BUTTON_MIDDLE) {
+          } else if (e.button.button == SDL_BUTTON_MIDDLE ||
+                     (shift && e.button.button == SDL_BUTTON_LEFT)) {
             is_middle_dragging = true;
           }
         }
@@ -137,7 +185,7 @@ int main(int argc, char* argv[]) {
       if (e.type == SDL_MOUSEBUTTONUP) {
         if (e.button.button == SDL_BUTTON_RIGHT) {
           is_right_dragging = false;
-        } else if (e.button.button == SDL_BUTTON_MIDDLE) {
+        } else if (e.button.button == SDL_BUTTON_MIDDLE || e.button.button == SDL_BUTTON_LEFT) {
           is_middle_dragging = false;
         }
       }
@@ -175,6 +223,20 @@ int main(int argc, char* argv[]) {
           const auto res = command_stack.redo();
           MIKU_UNUSED(res);
         }
+      }
+    }
+
+    if (auto result = async_loader.poll_result(); result.has_value()) {
+      if (*result) {
+        ModelData& data = **result;
+        loaded_model_name = data.name.empty() ? "MMD Model" : std::move(data.name);
+        gl_mesh.upload(data.vertices, data.indices);
+        texture_manager.upload_textures(data.textures);
+        model_submeshes = std::move(data.submeshes);
+        model_materials = std::move(data.materials);
+      } else {
+        const auto path = async_loader.current_path();
+        fprintf(stderr, "Failed to load model: %.*s\n", (int)path.size(), path.data());
       }
     }
 
@@ -237,8 +299,18 @@ int main(int argc, char* argv[]) {
 
     if (show_scene_panel) {
       if (ImGui::Begin("Scene Nodes", &show_scene_panel)) {
-        ImGui::TextDisabled("Scene hierarchy");
-        // TODO: Populate scene nodes (Model instance, Camera, Light, Grid)
+        if (gl_mesh.is_valid()) {
+          ImGui::Text("Model: %s", loaded_model_name.c_str());
+          ImGui::Text("Vertices: %u, Indices: %u", gl_mesh.vertex_count(), gl_mesh.index_count());
+          ImGui::Separator();
+          ImGui::Text("Submeshes (%zu):", model_submeshes.size());
+          for (size_t i = 0; i < model_submeshes.size(); ++i) {
+            const auto& sm = model_submeshes[i];
+            ImGui::BulletText("[%zu] %s (count: %u)", i, sm.name.c_str(), sm.index_count);
+          }
+        } else {
+          ImGui::TextDisabled("No model loaded");
+        }
       }
       ImGui::End();
     }
@@ -271,6 +343,8 @@ int main(int argc, char* argv[]) {
       ImGui::ShowDemoWindow(&show_demo_window);
     }
 
+    LoadingIndicator::draw(async_loader.is_loading(), async_loader.current_path());
+
     ImGui::Render();
 
     const f32 display_w = io.DisplaySize.x;
@@ -285,7 +359,36 @@ int main(int argc, char* argv[]) {
 
     grid->render(view, proj);
 
-    // TODO: Render MMD models to backbuffer
+    if (gl_mesh.is_valid()) {
+      glEnable(GL_DEPTH_TEST);
+      glDepthFunc(GL_LESS);
+      mesh_shader->bind();
+      mesh_shader->set_uniform_mat4("u_model", ran::Mat4f32::identity());
+      mesh_shader->set_uniform_mat4("u_view", view);
+      mesh_shader->set_uniform_mat4("u_proj", proj);
+      gl_mesh.bind();
+
+      for (const auto& sm : model_submeshes) {
+        if (sm.material_index < model_materials.size()) {
+          const auto& mat = model_materials[sm.material_index];
+          if (mat.is_double_sided) {
+            glDisable(GL_CULL_FACE);
+          } else {
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+          }
+          texture_manager.bind_texture(mat.texture_index, 0);
+          mesh_shader->set_uniform_int("u_diffuse_texture", 0);
+          mesh_shader->set_uniform_int("u_has_texture", mat.texture_index >= 0 ? 1 : 0);
+          mesh_shader->set_uniform_vec4("u_diffuse_color", mat.diffuse);
+        }
+        gl_mesh.draw_submesh(sm.index_offset, sm.index_count);
+      }
+
+      gl_mesh.unbind();
+      glDisable(GL_CULL_FACE);
+      ShaderProgram::unbind();
+    }
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     SDL_GL_SwapWindow(win);

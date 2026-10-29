@@ -109,6 +109,15 @@ void ShaderProgram::set_uniform_mat4(std::string_view name,
   }
 }
 
+void ShaderProgram::set_uniform_vec4(std::string_view name,
+                                     const ran::Vec4f32& vec) const noexcept {
+  const std::string name_str(name);
+  const i32 loc = glGetUniformLocation(_program_id, name_str.c_str());
+  if (loc >= 0) {
+    glUniform4fv(loc, 1, vec.data());
+  }
+}
+
 void ShaderProgram::set_uniform_vec3(std::string_view name,
                                      const ran::Vec3f32& vec) const noexcept {
   const std::string name_str(name);

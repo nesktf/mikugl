@@ -3,9 +3,11 @@
 #define MIKU_UNUSED(thing) (void)thing
 #define miku_assert        assert
 
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -45,6 +47,12 @@ using Unexpected = ::ntf::unexpected<E>;
 
 template<typename T>
 using UniqueArray = ::ntf::UniqueArray<T>;
+
+template<typename T>
+using Optional = std::optional<T>;
+
+using ::ntf::make_unique_array;
+using ::ntf::uninitialized;
 
 template<typename T>
 using Span = std::span<T>;
@@ -93,5 +101,27 @@ struct OverloadFn : Fs... {
 
 template<typename... Fs>
 OverloadFn(Fs...) -> OverloadFn<Fs...>;
+
+constexpr auto missing_texture = []() {
+  std::array<u8, 4 * 16 * 16> pixels;
+  for (u32 x = 0; x < 16; x++) {
+    for (u32 y = 0; y < 16; y++) {
+      const u8 a = 0xFF;
+      const u8 g = 0x00;
+      u8 r = 0x00;
+      u8 b = 0x00;
+      if ((x % 2) ^ (y % 2)) {
+        // make magenta
+        r = 0xFF;
+        b = 0xFF;
+      }
+      pixels[(y * 16 + x) * 4 + 0] = r;
+      pixels[(y * 16 + x) * 4 + 1] = g;
+      pixels[(y * 16 + x) * 4 + 2] = b;
+      pixels[(y * 16 + x) * 4 + 3] = a;
+    }
+  }
+  return pixels;
+}();
 
 } // namespace mikugl

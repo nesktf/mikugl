@@ -4,6 +4,9 @@
 
 namespace mikugl {
 
-void apply_imgui_dark_theme();
+class Theme {
+public:
+  static void apply_dark_theme();
+};
 
 } // namespace mikugl

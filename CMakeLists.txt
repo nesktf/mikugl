@@ -22,6 +22,9 @@ option(MIKU_BUILD_TESTS "Build tests" ON)
 if (MIKU_BUILD_TESTS)
   enable_testing()
   set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "Don't update dependencies" FORCE)
+  if (EXISTS "${CMAKE_CURRENT_BINARY_DIR}/_deps/catch2-src")
+    set(FETCHCONTENT_SOURCE_DIR_CATCH2 "${CMAKE_CURRENT_BINARY_DIR}/_deps/catch2-src")
+  endif()
   FetchContent_Declare(
     Catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
@@ -70,13 +73,13 @@ list(APPEND LIB_INCLUDE "lib/imgui" "lib/imgui/backends")
 list(APPEND LIB_SOURCES ${IMGUI_SOURCES})
 
 # embedded shaders generation
-file(GLOB_RECURSE SHADER_FILES "res/shaders/*.vert" "res/shaders/*.frag")
+file(GLOB_RECURSE SHADER_FILES "src/shaders/*.vert" "src/shaders/*.frag")
 set(GENERATED_SHADER_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/embedded_shaders.hpp")
 
 add_custom_command(
   OUTPUT "${GENERATED_SHADER_HEADER}"
   COMMAND ${CMAKE_COMMAND}
-    -DSHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/res/shaders"
+    -DSHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/shaders"
     -DOUTPUT_FILE="${GENERATED_SHADER_HEADER}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_shaders.cmake"
   DEPENDS ${SHADER_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_shaders.cmake"
@@ -98,10 +101,19 @@ target_link_libraries(mikugl_lib PUBLIC ${LIB_LINK})
 add_executable(${PROJECT_NAME} src/main.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC src "${CMAKE_CURRENT_BINARY_DIR}/generated" ${LIB_INCLUDE})
 set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE CXX CXX_STANDARD 20)
+add_custom_target(copy_default_models ALL
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/mmdgltf/models/default"
+    "${CMAKE_CURRENT_BINARY_DIR}/models/default"
+  COMMENT "Copying default models to binary directory"
+)
+add_dependencies(${PROJECT_NAME} copy_default_models)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE mikugl_lib)
 target_compile_definitions(${PROJECT_NAME} PRIVATE
   -DMIKU_RES_DIR=\"${RES_DIR}\"
   -DMIKU_MMDGLTF_MODEL_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/lib/mmdgltf/models\"
+  -DMIKU_DEFAULT_MODEL_DIR=\"${CMAKE_CURRENT_BINARY_DIR}/models/default\"
 )
 
 if (MIKU_BUILD_TESTS)

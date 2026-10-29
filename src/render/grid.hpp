@@ -8,7 +8,6 @@
 namespace mikugl {
 
 enum class GridError : u8 {
-  None = 0,
   ShaderCreationFailed,
   VaoCreationFailed,
 };

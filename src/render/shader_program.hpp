@@ -8,7 +8,6 @@
 namespace mikugl {
 
 enum class ShaderError : u8 {
-  None = 0,
   VertexCompilationFailed,
   FragmentCompilationFailed,
   LinkingFailed,
@@ -28,10 +27,9 @@ public:
 public:
   ShaderProgram(create_t, u32 program_id) noexcept;
   ~ShaderProgram() noexcept;
-
+  NTF_NO_COPY(ShaderProgram);
   ShaderProgram(ShaderProgram&& other) noexcept;
   ShaderProgram& operator=(ShaderProgram&& other) noexcept;
-  NTF_NO_COPY(ShaderProgram);
 
 public:
   u32 id() const noexcept { return _program_id; }
@@ -40,6 +38,7 @@ public:
 
 public:
   void set_uniform_mat4(std::string_view name, const ran::Mat4f32& mat) const noexcept;
+  void set_uniform_vec4(std::string_view name, const ran::Vec4f32& vec) const noexcept;
   void set_uniform_vec3(std::string_view name, const ran::Vec3f32& vec) const noexcept;
   void set_uniform_float(std::string_view name, f32 value) const noexcept;
   void set_uniform_int(std::string_view name, i32 value) const noexcept;

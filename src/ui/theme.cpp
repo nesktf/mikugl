@@ -4,7 +4,7 @@
 
 namespace mikugl {
 
-void apply_imgui_dark_theme() {
+void Theme::apply_dark_theme() {
   ImGuiStyle& style = ImGui::GetStyle();
   ImVec4* colors = style.Colors;
 
