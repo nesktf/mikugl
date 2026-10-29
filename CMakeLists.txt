@@ -101,6 +101,14 @@ target_link_libraries(mikugl_lib PUBLIC ${LIB_LINK})
 add_executable(${PROJECT_NAME} src/main.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC src "${CMAKE_CURRENT_BINARY_DIR}/generated" ${LIB_INCLUDE})
 set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE CXX CXX_STANDARD 20)
+add_custom_target(copy_data_assets ALL
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/data"
+    "${CMAKE_CURRENT_BINARY_DIR}/data"
+  COMMENT "Copying data assets to binary directory"
+)
+add_dependencies(${PROJECT_NAME} copy_data_assets)
+
 add_custom_target(copy_default_models ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/mmdgltf/models/default"
@@ -112,6 +120,7 @@ add_dependencies(${PROJECT_NAME} copy_default_models)
 target_link_libraries(${PROJECT_NAME} PRIVATE mikugl_lib)
 target_compile_definitions(${PROJECT_NAME} PRIVATE
   -DMIKU_RES_DIR=\"${RES_DIR}\"
+  -DMIKU_DATA_DIR=\"${CMAKE_CURRENT_BINARY_DIR}/data\"
   -DMIKU_MMDGLTF_MODEL_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/lib/mmdgltf/models\"
   -DMIKU_DEFAULT_MODEL_DIR=\"${CMAKE_CURRENT_BINARY_DIR}/models/default\"
 )

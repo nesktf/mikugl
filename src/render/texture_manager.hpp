@@ -20,6 +20,8 @@ public:
   void clear() noexcept;
 
 public:
+  bool has_texture(i32 texture_index) const noexcept;
+
   u32 missing_texture_id() const noexcept { return _missing_texture; }
 
   size_t texture_count() const noexcept { return _textures.size(); }

@@ -1,7 +1,10 @@
 #pragma once
 
+#define MIKU_UNREACHABLE   NTF_UNREACHABLE
+#define MIKU_ABORT         NTF_ABORT
 #define MIKU_UNUSED(thing) (void)thing
 #define miku_assert        assert
+#define miku_panic(msg) ::mikugl::migu_panic_handler(__FILE__, __PRETTY_FUNCTION__, __LINE__, msg)
 
 #include <array>
 #include <cassert>
@@ -16,6 +19,10 @@
 #include <ntf/unique.hpp>
 
 namespace mikugl {
+
+// migu fuarking kills herself
+[[noreturn]] void migu_panic_handler(const char* file, const char* func, int line,
+                                     const char* msg);
 
 using size_t = ::size_t;
 using ptrdiff_t = ::ptrdiff_t;

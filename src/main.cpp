@@ -1,10 +1,13 @@
+#include "core.hpp"
 #include "core/command_stack.hpp"
 #include "model/async_loader.hpp"
 #include "model/model_data.hpp"
 #include "render/gl_mesh.hpp"
 #include "render/grid.hpp"
 #include "render/shader_program.hpp"
+#include "render/shadow_map.hpp"
 #include "render/texture_manager.hpp"
+#include "render/toon_manager.hpp"
 #include "scene/camera.hpp"
 #include "ui/loading_indicator.hpp"
 #include "ui/theme.hpp"
@@ -24,6 +27,26 @@
 
 using namespace mikugl;
 namespace stdfs = std::filesystem;
+
+[[noreturn]] void mikugl::migu_panic_handler(const char* file, const char* func, int line,
+                                             const char* msg) {
+  static constexpr std::string_view srcdir =
+#ifdef _WIN
+    "mikugl\\src\\";
+#else
+    "mikugl/src/";
+#endif
+  std::string_view str{file};
+  const auto src_dir_pos = str.find(srcdir);
+  if (src_dir_pos != std::string_view::npos) {
+    str = str.substr(src_dir_pos + srcdir.size());
+  }
+  // str should still be null terminated at this point
+  fprintf(stderr, "PANIC: %s@%s:%d: %s\n", func, str.data(), line, msg);
+  fprintf(stderr, "MIGU IS FUARKING DEAD, AND YOU KILLED HER\n");
+  MIKU_ABORT();
+  MIKU_UNREACHABLE();
+}
 
 namespace {
 
@@ -126,11 +149,30 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  auto mesh_shader = ShaderProgram::create(shaders::k_basic_mesh_vert, shaders::k_basic_mesh_frag);
-  if (!mesh_shader) {
-    fprintf(stderr, "Failed to initialize mesh shader\n");
+  auto mmd_shader = ShaderProgram::create(shaders::k_mmd_model_vert, shaders::k_mmd_model_frag);
+  if (!mmd_shader) {
+    fprintf(stderr, "Failed to initialize MMD shader\n");
     return 1;
   }
+
+  auto outline_shader = ShaderProgram::create(shaders::k_outline_vert, shaders::k_outline_frag);
+  if (!outline_shader) {
+    fprintf(stderr, "Failed to initialize outline shader\n");
+    return 1;
+  }
+
+  auto shadow_shader =
+    ShaderProgram::create(shaders::k_shadow_depth_vert, shaders::k_shadow_depth_frag);
+  if (!shadow_shader) {
+    fprintf(stderr, "Failed to initialize shadow shader\n");
+    return 1;
+  }
+
+  ToonManager toon_manager;
+  toon_manager.init();
+
+  ShadowMap shadow_map;
+  shadow_map.init();
 
   GlMesh gl_mesh;
   TextureManager texture_manager;
@@ -146,6 +188,8 @@ int main(int argc, char* argv[]) {
 
   MmdCamera camera{};
   CommandStack command_stack{};
+  ran::Vec3f32 light_color{1.0f, 1.0f, 1.0f};
+  ran::Vec3f32 light_dir{0.5f, 1.0f, 0.7f};
 
   bool should_exit = false;
   bool show_scene_panel = true;
@@ -326,7 +370,10 @@ int main(int argc, char* argv[]) {
     if (show_inspector_panel) {
       if (ImGui::Begin("Inspector", &show_inspector_panel)) {
         ImGui::TextDisabled("Transform inspector");
-        // TODO: Show selected node / bone transform controls
+        ImGui::Spacing();
+        ImGui::SeparatorText("Directional Light");
+        ImGui::ColorEdit3("Light Color", light_color.data());
+        ImGui::DragFloat3("Light Direction", light_dir.data(), 0.01f, -1.0f, 1.0f);
       }
       ImGui::End();
     }
@@ -349,23 +396,51 @@ int main(int argc, char* argv[]) {
 
     const f32 display_w = io.DisplaySize.x;
     const f32 display_h = io.DisplaySize.y;
-    glViewport(0, 0, static_cast<i32>(display_w), static_cast<i32>(display_h));
-    glClearColor(0.18f, 0.18f, 0.19f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
     const f32 aspect = (display_h > 0.0f) ? (display_w / display_h) : 1.0f;
     const ran::Mat4f32 view = camera.compute_view_matrix();
     const ran::Mat4f32 proj = camera.compute_projection_matrix(aspect);
 
-    grid->render(view, proj);
+    const auto [light_view, light_proj] =
+      shadow_map.compute_light_matrices(camera.target(), light_dir);
+    const ran::Mat4f32 light_view_proj = light_proj * light_view;
 
     if (gl_mesh.is_valid()) {
       glEnable(GL_DEPTH_TEST);
       glDepthFunc(GL_LESS);
-      mesh_shader->bind();
-      mesh_shader->set_uniform_mat4("u_model", ran::Mat4f32::identity());
-      mesh_shader->set_uniform_mat4("u_view", view);
-      mesh_shader->set_uniform_mat4("u_proj", proj);
+      shadow_map.bind_fbo();
+      shadow_shader->bind();
+      shadow_shader->set_uniform_mat4("u_model", ran::Mat4f32::identity());
+      shadow_shader->set_uniform_mat4("u_light_view", light_view);
+      shadow_shader->set_uniform_mat4("u_light_proj", light_proj);
+      gl_mesh.bind();
+      for (const auto& sm : model_submeshes) {
+        gl_mesh.draw_submesh(sm.index_offset, sm.index_count);
+      }
+      gl_mesh.unbind();
+      shadow_map.unbind_fbo(static_cast<i32>(display_w), static_cast<i32>(display_h));
+    }
+
+    glViewport(0, 0, static_cast<i32>(display_w), static_cast<i32>(display_h));
+    glClearColor(0.18f, 0.18f, 0.19f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    shadow_map.bind_texture(3);
+    grid->render(view, proj, light_view_proj, gl_mesh.is_valid());
+
+    if (gl_mesh.is_valid()) {
+      glEnable(GL_DEPTH_TEST);
+      glDepthFunc(GL_LESS);
+
+      mmd_shader->bind();
+      mmd_shader->set_uniform_mat4("u_model", ran::Mat4f32::identity());
+      mmd_shader->set_uniform_mat4("u_view", view);
+      mmd_shader->set_uniform_mat4("u_proj", proj);
+      mmd_shader->set_uniform_mat4("u_light_view_proj", light_view_proj);
+      mmd_shader->set_uniform_vec3("u_light_dir", light_dir);
+      mmd_shader->set_uniform_vec3("u_light_color", light_color);
+      mmd_shader->set_uniform_vec3("u_camera_pos", camera.compute_position());
+      shadow_map.bind_texture(3);
+      mmd_shader->set_uniform_int("u_has_shadow", 1);
       gl_mesh.bind();
 
       for (const auto& sm : model_submeshes) {
@@ -378,14 +453,60 @@ int main(int argc, char* argv[]) {
             glCullFace(GL_BACK);
           }
           texture_manager.bind_texture(mat.texture_index, 0);
-          mesh_shader->set_uniform_int("u_diffuse_texture", 0);
-          mesh_shader->set_uniform_int("u_has_texture", mat.texture_index >= 0 ? 1 : 0);
-          mesh_shader->set_uniform_vec4("u_diffuse_color", mat.diffuse);
+          mmd_shader->set_uniform_int("u_has_diffuse", mat.texture_index >= 0 ? 1 : 0);
+          mmd_shader->set_uniform_vec4("u_diffuse_color", mat.diffuse);
+          mmd_shader->set_uniform_vec3("u_specular_color", mat.specular);
+          mmd_shader->set_uniform_vec3("u_ambient_color", mat.ambient);
+          mmd_shader->set_uniform_float("u_shininess", mat.shininess);
+
+          if (mat.sphere_texture_index >= 0 && mat.sphere_mode > 0) {
+            texture_manager.bind_texture(mat.sphere_texture_index, 1);
+            mmd_shader->set_uniform_int("u_has_sphere", 1);
+            mmd_shader->set_uniform_int("u_sphere_mode", mat.sphere_mode);
+          } else {
+            mmd_shader->set_uniform_int("u_has_sphere", 0);
+            mmd_shader->set_uniform_int("u_sphere_mode", 0);
+          }
+
+          if (mat.toon_sharing_flag == 1) {
+            toon_manager.bind_shared_toon(static_cast<u8>(mat.toon_index), 2);
+            mmd_shader->set_uniform_int("u_has_toon", 1);
+          } else if (mat.toon_index >= 0) {
+            texture_manager.bind_texture(mat.toon_index, 2);
+            mmd_shader->set_uniform_int("u_has_toon", 1);
+          } else {
+            mmd_shader->set_uniform_int("u_has_toon", 0);
+          }
         }
         gl_mesh.draw_submesh(sm.index_offset, sm.index_count);
       }
-
       gl_mesh.unbind();
+      glDisable(GL_CULL_FACE);
+
+      glEnable(GL_DEPTH_TEST);
+      glDepthFunc(GL_LESS);
+      glEnable(GL_CULL_FACE);
+      glCullFace(GL_FRONT);
+
+      outline_shader->bind();
+      outline_shader->set_uniform_mat4("u_model", ran::Mat4f32::identity());
+      outline_shader->set_uniform_mat4("u_view", view);
+      outline_shader->set_uniform_mat4("u_proj", proj);
+      outline_shader->set_uniform_vec2("u_viewport_size", ran::Vec2f32{display_w, display_h});
+      gl_mesh.bind();
+
+      for (const auto& sm : model_submeshes) {
+        if (sm.material_index < model_materials.size()) {
+          const auto& mat = model_materials[sm.material_index];
+          if (mat.has_edge && mat.edge_size > 0.0f) {
+            outline_shader->set_uniform_float("u_edge_size", mat.edge_size);
+            outline_shader->set_uniform_vec4("u_edge_color", mat.edge_color);
+            gl_mesh.draw_submesh(sm.index_offset, sm.index_count);
+          }
+        }
+      }
+      gl_mesh.unbind();
+      glCullFace(GL_BACK);
       glDisable(GL_CULL_FACE);
       ShaderProgram::unbind();
     }
@@ -393,6 +514,6 @@ int main(int argc, char* argv[]) {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     SDL_GL_SwapWindow(win);
   }
-
+  printf("(in Mario voice) ByeBye!\n");
   return 0;
 }

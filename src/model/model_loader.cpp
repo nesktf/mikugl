@@ -134,6 +134,7 @@ Expected<ModelData, ModelLoadError> ModelLoader::load_file(std::string_view path
       dst_mat.texture_index = src_mat.texture_index;
       dst_mat.sphere_texture_index = src_mat.sphere_texture_index;
       dst_mat.toon_index = src_mat.toon_index;
+      dst_mat.toon_sharing_flag = src_mat.toon_sharing_flag;
       dst_mat.sphere_mode = static_cast<u8>(src_mat.sphere_mode);
       dst_mat.is_double_sided = (src_mat.draw_flags & MMDGLTF_MATERIAL_DOUBLE_SIDED) != 0;
       dst_mat.has_edge = (src_mat.draw_flags & MMDGLTF_MATERIAL_EDGE) != 0;

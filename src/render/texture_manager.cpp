@@ -111,4 +111,9 @@ void TextureManager::clear() noexcept {
   _textures.clear();
 }
 
+bool TextureManager::has_texture(i32 texture_index) const noexcept {
+  return texture_index >= 0 && (size_t)texture_index < _textures.size() &&
+         _textures[texture_index] != 0;
+}
+
 } // namespace mikugl

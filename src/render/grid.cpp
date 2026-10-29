@@ -49,7 +49,8 @@ Grid& Grid::operator=(Grid&& other) noexcept {
   return *this;
 }
 
-void Grid::render(const ran::Mat4f32& view, const ran::Mat4f32& proj) const noexcept {
+void Grid::render(const ran::Mat4f32& view, const ran::Mat4f32& proj,
+                  const ran::Mat4f32& light_view_proj, bool has_shadow) const noexcept {
   if (!_vao || !_shader.moved_from()) {
     return;
   }
@@ -62,6 +63,8 @@ void Grid::render(const ran::Mat4f32& view, const ran::Mat4f32& proj) const noex
   _shader.bind();
   _shader.set_uniform_mat4("u_view", view);
   _shader.set_uniform_mat4("u_proj", proj);
+  _shader.set_uniform_mat4("u_light_view_proj", light_view_proj);
+  _shader.set_uniform_int("u_has_shadow", (i32)has_shadow);
 
   glBindVertexArray(_vao);
   glDrawArrays(GL_TRIANGLES, 0, 6);

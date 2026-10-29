@@ -40,6 +40,7 @@ public:
   void set_uniform_mat4(std::string_view name, const ran::Mat4f32& mat) const noexcept;
   void set_uniform_vec4(std::string_view name, const ran::Vec4f32& vec) const noexcept;
   void set_uniform_vec3(std::string_view name, const ran::Vec3f32& vec) const noexcept;
+  void set_uniform_vec2(std::string_view name, const ran::Vec2f32& vec) const noexcept;
   void set_uniform_float(std::string_view name, f32 value) const noexcept;
   void set_uniform_int(std::string_view name, i32 value) const noexcept;
   void bind() const noexcept;

@@ -33,6 +33,7 @@ struct ModelMaterial {
   i32 texture_index;
   i32 sphere_texture_index;
   i32 toon_index;
+  u8 toon_sharing_flag;
   u8 sphere_mode;
   bool is_double_sided;
   bool has_edge;
