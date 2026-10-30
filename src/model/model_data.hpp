@@ -72,6 +72,42 @@ struct ModelBone {
   Vec<ModelIkLink> ik_links;
 };
 
+enum class MorphCategory : u8 {
+  System = 0,
+  Eyebrow = 1,
+  Eye = 2,
+  Mouth = 3,
+  Other = 4,
+};
+
+enum class MorphType : u8 {
+  Group = 0,
+  Vertex = 1,
+  Bone = 2,
+  Uv = 3,
+  Material = 4,
+  Other = 5,
+};
+
+struct VertexMorphOffset {
+  u32 vertex_index;
+  ran::Vec3f32 position_offset;
+};
+
+struct GroupMorphOffset {
+  i32 morph_index;
+  f32 factor;
+};
+
+struct ModelMorph {
+  std::string name_en;
+  std::string name_jp;
+  MorphCategory category;
+  MorphType type;
+  Vec<VertexMorphOffset> vertex_offsets;
+  Vec<GroupMorphOffset> group_offsets;
+};
+
 struct ModelData {
   std::string name;
   Vec<ModelVertex> vertices;
@@ -80,6 +116,7 @@ struct ModelData {
   Vec<ModelMaterial> materials;
   Vec<TextureCpuBuffer> textures;
   Vec<ModelBone> bones;
+  Vec<ModelMorph> morphs;
 };
 
 enum class ModelLoadError : u8 {

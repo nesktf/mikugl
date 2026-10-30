@@ -1,3 +1,4 @@
+#include "animation/morph.hpp"
 #include "animation/skeleton.hpp"
 #include "core/command_stack.hpp"
 #include "model/async_loader.hpp"
@@ -11,6 +12,7 @@
 #include "render/toon_manager.hpp"
 #include "scene/camera.hpp"
 #include "ui/loading_indicator.hpp"
+#include "ui/morph_panel.hpp"
 #include "ui/theme.hpp"
 #include <embedded_shaders.hpp>
 
@@ -220,6 +222,7 @@ int main(int argc, char* argv[]) {
   GlMesh gl_mesh;
 
   Optional<Skeleton> skeleton;
+  Optional<MorphManager> morph_manager;
   bool show_skeleton = true;
   f32 test_arm_pose = 0.0f;
   f32 test_leg_ik_height = 0.0f;
@@ -246,6 +249,7 @@ int main(int argc, char* argv[]) {
   bool should_exit = false;
   bool show_scene_panel = true;
   bool show_bone_panel = true;
+  bool show_morph_panel = true;
   bool show_inspector_panel = true;
   bool show_timeline_panel = true;
   bool show_demo_window = false;
@@ -327,6 +331,7 @@ int main(int argc, char* argv[]) {
       ModelData& data = *result;
       loaded_model_name = data.name.empty() ? "MMD Model" : std::move(data.name);
       skeleton = Skeleton::from_model_bones(data.bones).value();
+      morph_manager = MorphManager(data.vertices, std::move(data.morphs));
       gl_mesh.upload(data.vertices, data.indices);
       texture_manager.upload_textures(data.textures);
       model_submeshes = std::move(data.submeshes);
@@ -385,6 +390,7 @@ int main(int argc, char* argv[]) {
         ImGui::Separator();
         ImGui::MenuItem("Scene Nodes", nullptr, &show_scene_panel);
         ImGui::MenuItem("Bone Hierarchy", nullptr, &show_bone_panel);
+        ImGui::MenuItem("Facial Expressions", nullptr, &show_morph_panel);
         ImGui::MenuItem("Inspector", nullptr, &show_inspector_panel);
         ImGui::MenuItem("Timeline", nullptr, &show_timeline_panel);
         ImGui::Separator();
@@ -431,6 +437,9 @@ int main(int argc, char* argv[]) {
             test_leg_ik_height = 0.0f;
             test_leg_ik_front_back = 0.0f;
             skeleton->reset_pose();
+            if (morph_manager) {
+              morph_manager->reset_all();
+            }
           }
           ImGui::SameLine();
           if (ImGui::SliderFloat("Arm Pose Test", &test_arm_pose, -90.0f, 90.0f, "%.1f deg")) {
@@ -509,6 +518,10 @@ int main(int argc, char* argv[]) {
       ImGui::End();
     }
 
+    if (show_morph_panel && morph_manager) {
+      MorphPanel::draw(*morph_manager, &show_morph_panel);
+    }
+
     if (show_demo_window) {
       ImGui::ShowDemoWindow(&show_demo_window);
     }
@@ -529,6 +542,10 @@ int main(int argc, char* argv[]) {
     if (skeleton) {
       skeleton->update_ubo();
       skeleton->bind_ubo(2);
+    }
+
+    if (morph_manager && morph_manager->evaluate()) {
+      gl_mesh.update_vertices(morph_manager->deformed_vertices());
     }
 
     if (gl_mesh.is_valid()) {

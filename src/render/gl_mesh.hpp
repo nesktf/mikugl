@@ -17,6 +17,7 @@ public:
 
 public:
   void upload(Span<const ModelVertex> vertices, Span<const u32> indices);
+  void update_vertices(Span<const ModelVertex> vertices) noexcept;
   void bind() const noexcept;
   void unbind() const noexcept;
   void draw_submesh(u32 index_offset, u32 index_count) const noexcept;

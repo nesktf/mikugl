@@ -231,6 +231,38 @@ Expected<ModelData, ModelLoadError> ModelLoader::load_file(std::string_view path
     }
   }
 
+  if (const auto morphs = model->morphs(); morphs && !morphs->empty()) {
+    result->morphs.reserve(morphs->size());
+    for (const auto& m : *morphs) {
+      ModelMorph mm{};
+      if (m.name_en && m.name_en[0] != '\0') {
+        mm.name_en = m.name_en;
+      }
+      if (m.name_jp && m.name_jp[0] != '\0') {
+        mm.name_jp = m.name_jp;
+      }
+      mm.category = static_cast<MorphCategory>(m.category);
+      mm.type = static_cast<MorphType>(m.type);
+
+      if (m.type == MMDGLTF_MORPH_VERTEX && m.vertex_offsets && m.offset_count > 0) {
+        mm.vertex_offsets.reserve(m.offset_count);
+        for (u32 k = 0; k < m.offset_count; ++k) {
+          const auto& vo = m.vertex_offsets[k];
+          const ran::Vec3f32 off{vo.position_offset.x, vo.position_offset.y, vo.position_offset.z};
+          mm.vertex_offsets.emplace_back(vo.vertex_index, off);
+        }
+      } else if (m.type == MMDGLTF_MORPH_GROUP && m.group_offsets && m.offset_count > 0) {
+        mm.group_offsets.reserve(m.offset_count);
+        for (u32 k = 0; k < m.offset_count; ++k) {
+          const auto& go = m.group_offsets[k];
+          mm.group_offsets.emplace_back(go.morph_index, go.factor);
+        }
+      }
+
+      result->morphs.push_back(std::move(mm));
+    }
+  }
+
   return result;
 }
 

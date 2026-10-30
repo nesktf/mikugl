@@ -63,7 +63,7 @@ void GlMesh::upload(Span<const ModelVertex> vertices, Span<const u32> indices) {
 
   glBindBuffer(GL_ARRAY_BUFFER, _vbo);
   glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size_bytes()), vertices.data(),
-               GL_STATIC_DRAW);
+               GL_DYNAMIC_DRAW);
 
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _ebo);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size_bytes()),
@@ -97,6 +97,17 @@ void GlMesh::upload(Span<const ModelVertex> vertices, Span<const u32> indices) {
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+}
+
+void GlMesh::update_vertices(Span<const ModelVertex> vertices) noexcept {
+  if (!_vbo || vertices.empty()) {
+    return;
+  }
+  miku_assert(vertices.size() == _vertex_count && "Vertex count mismatch in update_vertices");
+  glBindBuffer(GL_ARRAY_BUFFER, _vbo);
+  glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size_bytes()),
+                  vertices.data());
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 void GlMesh::bind() const noexcept {
