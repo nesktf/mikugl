@@ -18,24 +18,11 @@ TEST_CASE("ModelLoader error handling", "[model_loader]") {
 }
 
 TEST_CASE("ModelLoader default PMD model loading", "[model_loader]") {
-  const std::string candidate_paths[] = {
-    "models/default/Miku_Hatsune_Ver2.pmd",
-    "lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
-    "../lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
-    "../../lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
-  };
+  const std::string_view model_path = MIKUGL_TEST_MODEL_PATH;
+  REQUIRE_FALSE(model_path.empty());
+  REQUIRE(std::filesystem::exists(model_path));
 
-  std::string valid_path;
-  for (const auto& path : candidate_paths) {
-    if (std::filesystem::exists(path)) {
-      valid_path = path;
-      break;
-    }
-  }
-
-  REQUIRE_FALSE(valid_path.empty());
-
-  const auto result = ModelLoader::load_file(valid_path);
+  const auto result = ModelLoader::load_file(model_path);
   REQUIRE(result.has_value());
 
   const auto& model = *result;
@@ -64,25 +51,12 @@ TEST_CASE("ModelLoader default PMD model loading", "[model_loader]") {
 }
 
 TEST_CASE("AsyncLoader asynchronous polling", "[async_loader]") {
-  const std::string candidate_paths[] = {
-    "models/default/Miku_Hatsune_Ver2.pmd",
-    "lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
-    "../lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
-    "../../lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
-  };
-
-  std::string valid_path;
-  for (const auto& path : candidate_paths) {
-    if (std::filesystem::exists(path)) {
-      valid_path = path;
-      break;
-    }
-  }
-
-  REQUIRE_FALSE(valid_path.empty());
+  const std::string_view model_path = MIKUGL_TEST_MODEL_PATH;
+  REQUIRE_FALSE(model_path.empty());
+  REQUIRE(std::filesystem::exists(model_path));
 
   AsyncLoader loader;
-  loader.request_load(valid_path);
+  loader.request_load(model_path);
 
   ModelExpect<ModelData> result{Unexpected(ModelLoadError::NotYetLoaded)};
   for (int i = 0; i < 50; ++i) {

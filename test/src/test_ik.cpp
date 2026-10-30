@@ -314,7 +314,8 @@ TEST_CASE("CCD-IK runtime toggle on/off", "[ik]") {
 }
 
 TEST_CASE("CCD-IK real PMD model leg IK solving", "[ik]") {
-  const std::string model_path = MIKUGL_TEST_MODEL_PATH;
+  const std::string_view model_path = MIKUGL_TEST_MODEL_PATH;
+  REQUIRE_FALSE(model_path.empty());
   REQUIRE(std::filesystem::exists(model_path));
 
   const auto model_res = ModelLoader::load_file(model_path);
