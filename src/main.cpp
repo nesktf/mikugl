@@ -1,5 +1,4 @@
 #include "animation/skeleton.hpp"
-#include "core.hpp"
 #include "core/command_stack.hpp"
 #include "model/async_loader.hpp"
 #include "model/model_data.hpp"
@@ -52,100 +51,25 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
-std::string find_asset_font(std::string_view font_name) {
-  const std::string rel_path = std::string("data/fonts/") + std::string(font_name);
-  const std::string bin_path =
-#ifdef MIKU_DATA_DIR
-    std::string(MIKU_DATA_DIR "/fonts/") + std::string(font_name);
-#else
-    "";
-#endif
-  const std::string imgui_path = std::string("lib/imgui/misc/fonts/") + std::string(font_name);
-  const std::string sys_path =
-    std::string("/usr/share/fonts/google-droid-sans-fonts/") + std::string(font_name);
+struct SDLContext {
+  SDL_Window* win;
+  SDL_GLContext gl;
+};
 
-  const auto candidates = std::to_array<std::string_view>({
-    rel_path,
-    bin_path,
-    imgui_path,
-    sys_path,
-  });
-
-  for (const auto& path : candidates) {
-    if (!path.empty() && stdfs::exists(path)) {
-      return std::string(path);
-    }
-  }
-  return "";
-}
-
-void init_imgui(SDL_Window* window, SDL_GLContext gl_context, f32 main_scale) {
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImGuiIO& io = ImGui::GetIO();
-  MIKU_UNUSED(io);
-
-  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-  io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
-  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-
-  Theme::apply_dark_theme();
-
-  ImGuiStyle& style = ImGui::GetStyle();
-  style.ScaleAllSizes(main_scale);
-
-  const f32 font_size = 16.0f * (main_scale > 0.0f ? main_scale : 1.0f);
-  const std::string base_font = find_asset_font("DroidSans.ttf");
-  const std::string jp_font = find_asset_font("DroidSansJapanese.ttf");
-
-  if (!base_font.empty()) {
-    io.Fonts->AddFontFromFileTTF(base_font.c_str(), font_size);
-  } else {
-    io.Fonts->AddFontDefault();
-  }
-
-  if (!jp_font.empty()) {
-    ImFontConfig config;
-    config.MergeMode = true;
-    io.Fonts->AddFontFromFileTTF(jp_font.c_str(), font_size, &config,
-                                 io.Fonts->GetGlyphRangesJapanese());
-  }
-
-  ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
-  ImGui_ImplOpenGL3_Init(nullptr);
-}
-
-std::string find_default_model_path() {
-  const auto candidate_paths = std::to_array<std::string_view>({
-    "models/default/Miku_Hatsune_Ver2.pmd",
-#ifdef MIKU_DEFAULT_MODEL_DIR
-    MIKU_DEFAULT_MODEL_DIR "/Miku_Hatsune_Ver2.pmd",
-#endif
-#ifdef MIKU_MMDGLTF_MODEL_DIR
-    MIKU_MMDGLTF_MODEL_DIR "/default/Miku_Hatsune_Ver2.pmd",
-#endif
-    "lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
-  });
-
-  for (const auto& path : candidate_paths) {
-    if (stdfs::exists(path)) {
-      return std::string(path);
-    }
-  }
-  return std::string(candidate_paths.front());
-}
-
-} // namespace
-
-int main(int argc, char* argv[]) {
-  MIKU_UNUSED(argc);
-  MIKU_UNUSED(argv);
-
+Optional<SDLContext> init_sdl(u32 width, u32 height) {
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) == -1) {
     fprintf(stderr, "Failed to load SDL2\n");
-    return 1;
+    return std::nullopt;
   }
-  const DeferFn sdl_defer = []() {
+  SDL_Window* win = nullptr;
+  SDL_GLContext gl = nullptr;
+  DeferFn on_err = [&]() {
+    if (gl) {
+      SDL_GL_DeleteContext(gl);
+    }
+    if (win) {
+      SDL_DestroyWindow(win);
+    }
     SDL_Quit();
   };
 
@@ -157,36 +81,107 @@ int main(int argc, char* argv[]) {
   SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-  const f32 main_scale = ImGui_ImplSDL2_GetContentScaleForDisplay(0);
 
-  SDL_GLContext gl = nullptr;
-  SDL_Window* win = SDL_CreateWindow("mikugl", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-                                     1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+  win = SDL_CreateWindow("mikugl", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height,
+                         SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
   if (!win) {
     fprintf(stderr, "Failed to create SDL window\n");
-    return 1;
+    return std::nullopt;
   }
-  const DeferFn win_defer = [&]() {
-    SDL_DestroyWindow(win);
-    if (gl) {
-      SDL_GL_DeleteContext(gl);
-    }
-  };
 
   gl = SDL_GL_CreateContext(win);
   if (!gl) {
     fprintf(stderr, "Failed to create gl context\n");
-    return 1;
+    return std::nullopt;
   }
   SDL_GL_MakeCurrent(win, gl);
   SDL_GL_SetSwapInterval(1);
 
   if (!gladLoadGLLoader(SDL_GL_GetProcAddress)) {
     fprintf(stderr, "Failed to load GLAD\n");
-    return 1;
+    return std::nullopt;
   }
 
-  init_imgui(win, gl, main_scale);
+  on_err.disengage();
+  return Optional<SDLContext>{std::in_place, win, gl};
+}
+
+void init_imgui(const stdfs::path& exe_dir, SDL_Window* window, SDL_GLContext gl_context) {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO& io = ImGui::GetIO();
+  MIKU_UNUSED(io);
+
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+  Theme::apply_dark_theme();
+
+  const f32 main_scale = ImGui_ImplSDL2_GetContentScaleForDisplay(0);
+  ImGuiStyle& style = ImGui::GetStyle();
+  style.ScaleAllSizes(main_scale);
+
+  const auto find_font = [&](std::string_view font_name) -> std::string {
+    const auto path = exe_dir / "data" / "fonts" / font_name;
+    return stdfs::exists(path) ? path : "";
+  };
+
+  const f32 font_size = 16.0f * (main_scale > 0.0f ? main_scale : 1.0f);
+
+  if (const auto base_font = find_font("DroidSans.ttf"); !base_font.empty()) {
+    io.Fonts->AddFontFromFileTTF(base_font.c_str(), font_size);
+  } else {
+    fprintf(stderr, "Base font not found: %s\n", base_font.c_str());
+    io.Fonts->AddFontDefault();
+  }
+
+  if (const auto jp_font = find_font("DroidSansJapanese.ttf"); !jp_font.empty()) {
+    ImFontConfig config;
+    config.MergeMode = true;
+    io.Fonts->AddFontFromFileTTF(jp_font.c_str(), font_size, &config,
+                                 io.Fonts->GetGlyphRangesJapanese());
+  } else {
+    fprintf(stderr, "JP Font not found: %s\n", jp_font.c_str());
+  }
+
+  ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
+  ImGui_ImplOpenGL3_Init(nullptr);
+}
+
+} // namespace
+
+int main(int argc, char* argv[]) {
+  MIKU_UNUSED(argc);
+  MIKU_UNUSED(argv);
+
+  const auto exe_dir = []() {
+#if defined(__linux__)
+    std::error_code ec;
+    const auto p = stdfs::canonical("/proc/self/exe", ec);
+    if (!ec) {
+      return p.parent_path();
+    }
+#elif defined(_WIN32)
+    wchar_t buffer[MAX_PATH];
+    if (GetModuleFileNameW(nullptr, buffer, MAX_PATH) > 0) {
+      return stdfs::path(buffer).parent_path();
+    }
+#endif
+    // TODO: check path in libnx
+    return stdfs::current_path();
+  }();
+
+  const auto sdl = init_sdl(1280, 720);
+  if (!sdl) {
+    return 1;
+  }
+  const DeferFn win_defer = [&]() {
+    SDL_GL_DeleteContext(sdl->gl);
+    SDL_DestroyWindow(sdl->win);
+    SDL_Quit();
+  };
+  init_imgui(exe_dir, sdl->win, sdl->gl);
 
   auto grid = Grid::create();
   if (!grid) {
@@ -213,20 +208,22 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  auto toon_manager = ToonManager::create();
-  auto shadow_map = ShadowMap::create();
   auto debug_draw = DebugDraw::create();
   if (!debug_draw) {
     fprintf(stderr, "Failed to initialize debug draw renderer\n");
     return 1;
   }
 
-  GlMesh gl_mesh;
+  auto toon_manager = ToonManager::create();
+  auto shadow_map = ShadowMap::create();
   auto texture_manager = TextureManager::create();
+  GlMesh gl_mesh;
 
   Optional<Skeleton> skeleton;
   bool show_skeleton = true;
   f32 test_arm_pose = 0.0f;
+  f32 test_leg_ik_height = 0.0f;
+  f32 test_leg_ik_front_back = 0.0f;
   i32 selected_bone_idx = -1;
 
   Vec<ModelSubmesh> model_submeshes;
@@ -234,8 +231,12 @@ int main(int argc, char* argv[]) {
   std::string loaded_model_name;
 
   AsyncLoader async_loader;
-  const auto default_model_path = find_default_model_path();
-  async_loader.request_load(default_model_path);
+  const auto default_model_path = exe_dir / "model" / "default" / "Miku_Hatsune_Ver2.pmd";
+  if (!stdfs::exists(default_model_path)) {
+    fprintf(stderr, "Migu not found at '%s'\n", default_model_path.c_str());
+  } else {
+    async_loader.request_load(default_model_path.c_str());
+  }
 
   MmdCamera camera{};
   CommandStack command_stack{};
@@ -252,7 +253,7 @@ int main(int argc, char* argv[]) {
   bool is_right_dragging = false;
   bool is_middle_dragging = false;
 
-  const ImGuiIO& io = ImGui::GetIO();
+  const auto& io = ImGui::GetIO();
   while (!should_exit) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
@@ -261,7 +262,7 @@ int main(int argc, char* argv[]) {
         should_exit = true;
       }
       if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
-          e.window.windowID == SDL_GetWindowID(win)) {
+          e.window.windowID == SDL_GetWindowID(sdl->win)) {
         should_exit = true;
       }
 
@@ -321,21 +322,20 @@ int main(int argc, char* argv[]) {
       }
     }
 
-    if (auto result = async_loader.poll_result(); result.has_value()) {
-      if (*result) {
-        ModelData& data = **result;
-        loaded_model_name = data.name.empty() ? "MMD Model" : std::move(data.name);
-        skeleton = Skeleton::from_model_bones(data.bones).value();
-        gl_mesh.upload(data.vertices, data.indices);
-        texture_manager.upload_textures(data.textures);
-        model_submeshes = std::move(data.submeshes);
-        model_materials = std::move(data.materials);
-        test_arm_pose = 0.0f;
-        selected_bone_idx = -1;
-      } else {
-        const auto path = async_loader.current_path();
-        fprintf(stderr, "Failed to load model: %.*s\n", (int)path.size(), path.data());
-      }
+    auto result = async_loader.poll_result();
+    if (result) {
+      ModelData& data = *result;
+      loaded_model_name = data.name.empty() ? "MMD Model" : std::move(data.name);
+      skeleton = Skeleton::from_model_bones(data.bones).value();
+      gl_mesh.upload(data.vertices, data.indices);
+      texture_manager.upload_textures(data.textures);
+      model_submeshes = std::move(data.submeshes);
+      model_materials = std::move(data.materials);
+      test_arm_pose = 0.0f;
+      selected_bone_idx = -1;
+    } else if (result.error() != ModelLoadError::NotYetLoaded) {
+      const auto path = async_loader.current_path();
+      fprintf(stderr, "Failed to load model: %.*s\n", (int)path.size(), path.data());
     }
 
     ImGui_ImplOpenGL3_NewFrame();
@@ -419,8 +419,17 @@ int main(int argc, char* argv[]) {
         ImGui::Separator();
         if (skeleton) {
           ImGui::Text("Total Bones: %u", skeleton->bone_count());
+          ImGui::SameLine();
+          bool ik_active = skeleton->is_ik_enabled();
+          if (ImGui::Checkbox("Enable IK", &ik_active)) {
+            skeleton->set_ik_enabled(ik_active);
+            skeleton->update_pose();
+          }
+
           if (ImGui::Button("Reset Pose")) {
             test_arm_pose = 0.0f;
+            test_leg_ik_height = 0.0f;
+            test_leg_ik_front_back = 0.0f;
             skeleton->reset_pose();
           }
           ImGui::SameLine();
@@ -437,7 +446,25 @@ int main(int argc, char* argv[]) {
                 static_cast<u32>(right_arm),
                 ran::to_quat(ran::rad(test_arm_pose), ran::Vec3f32{0.0f, 0.0f, 1.0f}));
             }
-            skeleton->update_fk();
+            skeleton->update_pose();
+          }
+
+          bool update_leg = false;
+          if (ImGui::SliderFloat("Leg IK Height", &test_leg_ik_height, 0.0f, 4.0f, "%.2f")) {
+            update_leg = true;
+          }
+          if (ImGui::SliderFloat("Leg IK Depth (+Front/-Back)", &test_leg_ik_front_back, -4.0f,
+                                 4.0f, "%.2f")) {
+            update_leg = true;
+          }
+          if (update_leg) {
+            const i32 left_foot_ik = skeleton->find_bone_index("左足ＩＫ");
+            if (left_foot_ik >= 0) {
+              skeleton->set_bone_translation(
+                static_cast<u32>(left_foot_ik),
+                ran::Vec3f32{0.0f, test_leg_ik_height, test_leg_ik_front_back});
+            }
+            skeleton->update_pose();
           }
 
           ImGui::Separator();
@@ -619,7 +646,7 @@ int main(int argc, char* argv[]) {
     }
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    SDL_GL_SwapWindow(win);
+    SDL_GL_SwapWindow(sdl->win);
   }
   printf("(in Mario voice) ByeBye!\n");
   return 0;

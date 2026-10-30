@@ -50,6 +50,13 @@ struct TextureCpuBuffer {
   bool valid;
 };
 
+struct ModelIkLink {
+  i32 bone_index;
+  bool has_limits;
+  ran::Vec3f32 min_angle;
+  ran::Vec3f32 max_angle;
+};
+
 struct ModelBone {
   std::string name_en;
   std::string name_jp;
@@ -62,6 +69,7 @@ struct ModelBone {
   i32 ik_target_index;
   i32 ik_loop_count;
   f32 ik_limit_angle;
+  Vec<ModelIkLink> ik_links;
 };
 
 struct ModelData {
@@ -80,6 +88,7 @@ enum class ModelLoadError : u8 {
   CorruptData,
   OutOfMemory,
   UnsupportedFormat,
+  NotYetLoaded,
   Unknown,
 };
 

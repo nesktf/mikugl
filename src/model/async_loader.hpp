@@ -1,6 +1,5 @@
 #pragma once
 
-#include "core.hpp"
 #include "model/model_data.hpp"
 
 #include <mutex>
@@ -20,16 +19,16 @@ public:
 
 public:
   void request_load(std::string_view path);
-  bool is_loading() const noexcept;
-  std::string_view current_path() const noexcept;
-  Optional<ModelExpect<ModelData>> poll_result();
+  bool is_loading() noexcept;
+  std::string_view current_path() noexcept;
+  ModelExpect<ModelData> poll_result();
 
 private:
-  mutable std::mutex _mutex;
+  std::mutex _mutex;
   std::jthread _worker;
   std::string _current_path;
   bool _is_loading;
-  std::optional<Expected<ModelData, ModelLoadError>> _result;
+  ModelExpect<ModelData> _result;
 };
 
 } // namespace mikugl

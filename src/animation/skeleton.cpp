@@ -1,6 +1,5 @@
 #include "animation/skeleton.hpp"
 
-#include <algorithm>
 #include <utility>
 
 namespace mikugl {
@@ -83,6 +82,73 @@ Optional<SortedBones> sort_bone_hierarchy(Span<const ModelBone> model_bones) {
                                std::move(bone_remapping)};
 }
 
+Vec<IkChain> generate_ik_chains(Span<const ModelBone> model_bones,
+                                Span<const u32> bone_remapping) {
+  const u32 total_bones = (u32)model_bones.size();
+  Vec<IkChain> chains;
+  for (u32 idx = 0; idx < total_bones; ++idx) {
+    const auto& mb = model_bones[idx];
+    if (mb.ik_target_index < 0 || mb.ik_links.empty()) {
+      continue;
+    }
+    miku_assert((u32)mb.ik_target_index < total_bones);
+
+    Vec<IkLink> links;
+    links.reserve(mb.ik_links.size());
+    for (const auto& ml : mb.ik_links) {
+      if (ml.bone_index < 0) {
+        continue;
+      }
+      miku_assert((u32)ml.bone_index < total_bones);
+
+      IkLink link{};
+      link.bone_index = bone_remapping[ml.bone_index];
+      link.has_limits = ml.has_limits;
+      link.min_angle = ml.min_angle;
+      link.max_angle = ml.max_angle;
+#if 0
+      const auto& link_mb = model_bones[ml.bone_index];
+      link.is_knee =
+        ml.has_limits && (link_mb.name_jp.find("\x82\xd0\x82\xb4") != std::string::npos ||
+                          link_mb.name_jp.find("膝") != std::string::npos ||
+                          link_mb.name_en.find("knee") != std::string::npos ||
+                          link_mb.name_en.find("Knee") != std::string::npos ||
+                          (ml.min_angle.y == 0.0f && ml.max_angle.y == 0.0f &&
+                           ml.min_angle.z == 0.0f && ml.max_angle.z == 0.0f));
+
+#endif
+
+      // hack to invert the coordinate system of the knee iks
+      // (pmx iks expect directx coords apparently)
+      // TODO: check if this is applicable in general
+      const f32 abs_min = ran::abs(ml.min_angle.x);
+      const f32 abs_max = ran::abs(ml.max_angle.x);
+      link.min_angle.x = ran::min(abs_min, abs_max);
+      link.max_angle.x = ran::max(abs_min, abs_max);
+      if (link.max_angle.x < 0.1f) {
+        link.max_angle.x = ran::pi<f32>;
+      }
+      if (link.min_angle.x < 0.00872665f) {
+        link.min_angle.x = 0.00872665f;
+      }
+
+      links.push_back(link);
+    }
+    if (links.empty()) {
+      continue;
+    }
+    IkChain chain{};
+    chain.ik_bone_index = bone_remapping[idx];
+    chain.target_bone_index = bone_remapping[mb.ik_target_index];
+    chain.loop_count = (mb.ik_loop_count > 0) ? mb.ik_loop_count : 40;
+    chain.limit_angle = (mb.ik_limit_angle > 0.0f) ? mb.ik_limit_angle : (ran::pi<f32> / 4.0f);
+    chain.links = std::move(links);
+    chain.enabled = true;
+    chains.push_back(std::move(chain));
+  }
+  return chains;
+}
+
 } // namespace
 
 BoneExpect<Skeleton> Skeleton::from_model_bones(Span<const ModelBone> model_bones) {
@@ -93,6 +159,8 @@ BoneExpect<Skeleton> Skeleton::from_model_bones(Span<const ModelBone> model_bone
   auto& [armatures, sorted_bones, bone_remapping] = *parsed_bones;
 
   const u32 total_bones = (u32)model_bones.size();
+  auto ik_chains = generate_ik_chains(model_bones, bone_remapping);
+
   auto bones = make_unique_array<BoneNode>(total_bones);
   auto matrices = make_unique_array<ran::Mat4f32>(MAX_BONES, ran::Mat4f32::identity());
 
@@ -124,17 +192,18 @@ BoneExpect<Skeleton> Skeleton::from_model_bones(Span<const ModelBone> model_bone
     }
   }
 
-  Skeleton skelly{create_t(), std::move(bones), std::move(matrices), std::move(armatures),
-                  std::move(bone_remapping)};
-  skelly.update_fk();
+  Skeleton skelly{create_t(),           std::move(bones),          std::move(matrices),
+                  std::move(armatures), std::move(bone_remapping), std::move(ik_chains)};
+  skelly.update_pose();
   return skelly;
 }
 
 Skeleton::Skeleton(create_t, UniqueArray<BoneNode>&& bones,
                    UniqueArray<ran::Mat4f32>&& skinning_mats, Vec<RootArmature>&& armatures,
-                   Vec<u32>&& bone_remap) noexcept :
+                   Vec<u32>&& bone_remap, Vec<IkChain>&& ik_chains) noexcept :
     _bones(std::move(bones)), _skinning_matrices(std::move(skinning_mats)),
-    _armatures(std::move(armatures)), _bone_remap(std::move(bone_remap)), _ubo(0) {}
+    _armatures(std::move(armatures)), _bone_remap(std::move(bone_remap)),
+    _ik_chains(std::move(ik_chains)), _ik_enabled(true), _ubo(0) {}
 
 void Skeleton::_destroy_ubo() noexcept {
   if (_ubo) {
@@ -151,7 +220,8 @@ Skeleton::~Skeleton() noexcept {
 Skeleton::Skeleton(Skeleton&& other) noexcept :
     _bones(std::move(other._bones)), _skinning_matrices(std::move(other._skinning_matrices)),
     _cache(std::move(other._cache)), _armatures(std::move(other._armatures)),
-    _bone_remap(std::move(other._bone_remap)), _ubo(std::exchange(other._ubo, 0)) {}
+    _bone_remap(std::move(other._bone_remap)), _ik_chains(std::move(other._ik_chains)),
+    _ik_enabled(other._ik_enabled), _ubo(std::exchange(other._ubo, 0)) {}
 
 Skeleton& Skeleton::operator=(Skeleton&& other) noexcept {
   if (this != &other) {
@@ -161,6 +231,8 @@ Skeleton& Skeleton::operator=(Skeleton&& other) noexcept {
     _cache = std::move(other._cache);
     _armatures = std::move(other._armatures);
     _bone_remap = std::move(other._bone_remap);
+    _ik_chains = std::move(other._ik_chains);
+    _ik_enabled = other._ik_enabled;
     _ubo = std::exchange(other._ubo, 0);
   }
   return *this;
@@ -181,7 +253,7 @@ void Skeleton::update_ubo() noexcept {
   }
 
   glBindBuffer(GL_UNIFORM_BUFFER, _ubo);
-  const size_t count = std::min(static_cast<size_t>(MAX_BONES), _skinning_matrices.size());
+  const size_t count = ran::min(static_cast<size_t>(MAX_BONES), _skinning_matrices.size());
   glBufferSubData(GL_UNIFORM_BUFFER, 0, static_cast<GLsizeiptr>(count * sizeof(ran::Mat4f32)),
                   _skinning_matrices.data());
   glBindBuffer(GL_UNIFORM_BUFFER, 0);
@@ -242,23 +314,37 @@ void Skeleton::update_fk() noexcept {
   }
 }
 
+void Skeleton::update_pose() noexcept {
+  update_fk();
+  if (_ik_enabled && !_ik_chains.empty()) {
+    IkSolver::solve(*this, _ik_chains);
+    update_fk();
+  }
+}
+
+void Skeleton::solve_ik() noexcept {
+  if (_ik_enabled && !_ik_chains.empty()) {
+    IkSolver::solve(*this, _ik_chains);
+  }
+}
+
 void Skeleton::reset_pose() noexcept {
   for (auto& bn : _bones) {
     bn.local_translation = ran::Vec3f32{0.0f, 0.0f, 0.0f};
     bn.local_rotation = ran::Quatf32::identity();
     bn.local_scale = ran::Vec3f32{1.0f, 1.0f, 1.0f};
   }
-  update_fk();
+  update_pose();
 }
 
-void Skeleton::set_bone_rotation(u32 bone_index, const ran::Quatf32& rotation) noexcept {
+void Skeleton::set_bone_rotation(u32 bone_index, const ran::Quatf32& rotation) {
   miku_assert(bone_index < (u32)_bone_remap.size());
   const u32 idx = _bone_remap[bone_index];
   miku_assert(idx < (u32)_bones.size());
   _bones[idx].local_rotation = rotation;
 }
 
-void Skeleton::set_bone_translation(u32 bone_index, const ran::Vec3f32& translation) noexcept {
+void Skeleton::set_bone_translation(u32 bone_index, const ran::Vec3f32& translation) {
   miku_assert(bone_index < (u32)_bone_remap.size());
   const u32 idx = _bone_remap[bone_index];
   miku_assert(idx < (u32)_bones.size());
@@ -274,18 +360,28 @@ i32 Skeleton::find_bone_index(std::string_view name) const noexcept {
   return -1;
 }
 
-const Skeleton::BoneNode& Skeleton::bone(u32 index) const noexcept {
+const Skeleton::BoneNode& Skeleton::bone(u32 index) const {
   miku_assert(index < (u32)_bone_remap.size());
   const u32 idx = _bone_remap[index];
   miku_assert(idx < (u32)_bones.size());
   return _bones[idx];
 }
 
-Skeleton::BoneNode& Skeleton::bone(u32 index) noexcept {
+Skeleton::BoneNode& Skeleton::bone(u32 index) {
   miku_assert(index < (u32)_bone_remap.size());
   const u32 idx = _bone_remap[index];
   miku_assert(idx < (u32)_bones.size());
   return _bones[idx];
+}
+
+const Skeleton::BoneNode& Skeleton::node(u32 sorted_index) const {
+  miku_assert((size_t)sorted_index < _bones.size());
+  return _bones[sorted_index];
+}
+
+Skeleton::BoneNode& Skeleton::node(u32 sorted_index) {
+  miku_assert((size_t)sorted_index < _bones.size());
+  return _bones[sorted_index];
 }
 
 } // namespace mikugl

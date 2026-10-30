@@ -25,6 +25,13 @@ enable_testing()
 add_executable(${PROJECT_NAME} ${TEST_SOURCES})
 target_include_directories(${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 20)
+
+get_filename_component(MIKUGL_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+  MIKUGL_TEST_MODEL_PATH="${MIKUGL_ROOT_DIR}/lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd"
+  MIKUGL_TEST_DATA_DIR="${MIKUGL_ROOT_DIR}/data"
+)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE mikugl_lib Catch2::Catch2WithMain)
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)

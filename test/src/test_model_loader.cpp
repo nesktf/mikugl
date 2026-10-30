@@ -22,6 +22,7 @@ TEST_CASE("ModelLoader default PMD model loading", "[model_loader]") {
     "models/default/Miku_Hatsune_Ver2.pmd",
     "lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
     "../lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
+    "../../lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
   };
 
   std::string valid_path;
@@ -67,6 +68,7 @@ TEST_CASE("AsyncLoader asynchronous polling", "[async_loader]") {
     "models/default/Miku_Hatsune_Ver2.pmd",
     "lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
     "../lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
+    "../../lib/mmdgltf/models/default/Miku_Hatsune_Ver2.pmd",
   };
 
   std::string valid_path;
@@ -82,7 +84,7 @@ TEST_CASE("AsyncLoader asynchronous polling", "[async_loader]") {
   AsyncLoader loader;
   loader.request_load(valid_path);
 
-  Optional<ModelExpect<ModelData>> result = std::nullopt;
+  ModelExpect<ModelData> result{Unexpected(ModelLoadError::NotYetLoaded)};
   for (int i = 0; i < 50; ++i) {
     result = loader.poll_result();
     if (result.has_value()) {
@@ -92,6 +94,5 @@ TEST_CASE("AsyncLoader asynchronous polling", "[async_loader]") {
   }
 
   REQUIRE(result.has_value());
-  REQUIRE(result->has_value());
-  REQUIRE_FALSE(result->value().vertices.empty());
+  REQUIRE_FALSE(result->vertices.empty());
 }

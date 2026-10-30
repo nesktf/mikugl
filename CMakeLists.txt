@@ -101,11 +101,17 @@ target_link_libraries(mikugl_lib PUBLIC ${LIB_LINK})
 add_executable(${PROJECT_NAME} src/main.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC src "${CMAKE_CURRENT_BINARY_DIR}/generated" ${LIB_INCLUDE})
 set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE CXX CXX_STANDARD 20)
+
+set(EXPORT_DIR "${CMAKE_CURRENT_BINARY_DIR}/export")
+
 add_custom_target(copy_data_assets ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_CURRENT_SOURCE_DIR}/data"
     "${CMAKE_CURRENT_BINARY_DIR}/data"
-  COMMENT "Copying data assets to binary directory"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/data"
+    "${EXPORT_DIR}/data"
+  COMMENT "Copying data assets to binary and export directories"
 )
 add_dependencies(${PROJECT_NAME} copy_data_assets)
 
@@ -113,16 +119,26 @@ add_custom_target(copy_default_models ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/mmdgltf/models/default"
     "${CMAKE_CURRENT_BINARY_DIR}/models/default"
-  COMMENT "Copying default models to binary directory"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/mmdgltf/models/default"
+    "${CMAKE_CURRENT_BINARY_DIR}/model/default"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/mmdgltf/models/default"
+    "${EXPORT_DIR}/model/default"
+  COMMENT "Copying default models to binary and export directories"
 )
 add_dependencies(${PROJECT_NAME} copy_default_models)
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${EXPORT_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:${PROJECT_NAME}>" "${EXPORT_DIR}/$<TARGET_FILE_NAME:${PROJECT_NAME}>"
+  COMMENT "Exporting executable to ${EXPORT_DIR}"
+)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE mikugl_lib)
 target_compile_definitions(${PROJECT_NAME} PRIVATE
   -DMIKU_RES_DIR=\"${RES_DIR}\"
   -DMIKU_DATA_DIR=\"${CMAKE_CURRENT_BINARY_DIR}/data\"
-  -DMIKU_MMDGLTF_MODEL_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/lib/mmdgltf/models\"
-  -DMIKU_DEFAULT_MODEL_DIR=\"${CMAKE_CURRENT_BINARY_DIR}/models/default\"
 )
 
 if (MIKU_BUILD_TESTS)

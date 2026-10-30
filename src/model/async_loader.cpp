@@ -5,7 +5,8 @@
 namespace mikugl {
 
 AsyncLoader::AsyncLoader() noexcept :
-    _mutex(), _worker(), _current_path(), _is_loading(false), _result(std::nullopt) {}
+    _mutex(), _worker(), _current_path(), _is_loading(false),
+    _result(Unexpected(ModelLoadError::NotYetLoaded)) {}
 
 AsyncLoader::~AsyncLoader() noexcept {
   if (_worker.joinable()) {
@@ -46,7 +47,7 @@ void AsyncLoader::request_load(std::string_view path) {
     const std::lock_guard lock(_mutex);
     _current_path = std::string(path);
     _is_loading = true;
-    _result = std::nullopt;
+    _result = Unexpected(ModelLoadError::NotYetLoaded);
   }
 
   _worker = std::jthread([this, filepath = std::string(path)](std::stop_token stop_token) {
@@ -70,24 +71,24 @@ void AsyncLoader::request_load(std::string_view path) {
   });
 }
 
-bool AsyncLoader::is_loading() const noexcept {
+bool AsyncLoader::is_loading() noexcept {
   const std::lock_guard lock(_mutex);
   return _is_loading;
 }
 
-std::string_view AsyncLoader::current_path() const noexcept {
+std::string_view AsyncLoader::current_path() noexcept {
   const std::lock_guard lock(_mutex);
   return _current_path;
 }
 
-Optional<ModelExpect<ModelData>> AsyncLoader::poll_result() {
+ModelExpect<ModelData> AsyncLoader::poll_result() {
   const std::lock_guard lock(_mutex);
-  if (_is_loading || !_result.has_value()) {
-    return std::nullopt;
+  if (_is_loading) {
+    return Unexpected(ModelLoadError::NotYetLoaded);
   }
 
-  Optional<ModelExpect<ModelData>> res = std::move(_result);
-  _result.reset();
+  ModelExpect<ModelData> res = std::move(_result);
+  _result = Unexpected(ModelLoadError::NotYetLoaded);
   return res;
 }
 

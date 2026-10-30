@@ -33,26 +33,13 @@ TEST_CASE("ShadowMap light matrix calculations", "[shadow_map]") {
 TEST_CASE("ToonManager assets existence", "[toon_manager]") {
   REQUIRE(ToonManager::shared_toon_count == 10);
 
-  const std::string candidate_dirs[] = {
-    "data",
-    "../data",
-    "build/data",
-  };
-
-  std::string valid_dir;
-  for (const auto& dir : candidate_dirs) {
-    if (std::filesystem::exists(dir + "/toon01.bmp")) {
-      valid_dir = dir;
-      break;
-    }
-  }
-
-  REQUIRE_FALSE(valid_dir.empty());
+  const std::string data_dir = MIKUGL_TEST_DATA_DIR;
+  REQUIRE(std::filesystem::exists(data_dir));
 
   for (size_t i = 1; i <= 10; ++i) {
     const std::string filename =
       (i < 10) ? ("toon0" + std::to_string(i) + ".bmp") : ("toon" + std::to_string(i) + ".bmp");
-    REQUIRE(std::filesystem::exists(valid_dir + "/" + filename));
+    REQUIRE(std::filesystem::exists(data_dir + "/" + filename));
   }
 }
 

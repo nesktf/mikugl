@@ -25,7 +25,7 @@ Expected<ModelData, ModelLoadError> ModelLoader::load_file(std::string_view path
 
   const auto pmx = mmdgltf::PmxModel::load_file(path.data(), path.size());
   if (!pmx) {
-    return Unexpected<ModelLoadError>(map_mmdgltf_status(pmx.code()));
+    return Unexpected(map_mmdgltf_status(pmx.code()));
   }
 
   mmdgltf_ModelConfig config{};
@@ -36,17 +36,17 @@ Expected<ModelData, ModelLoadError> ModelLoader::load_file(std::string_view path
 
   const auto model = mmdgltf::Model::create(*pmx, &config);
   if (!model) {
-    return Unexpected<ModelLoadError>(map_mmdgltf_status(model.code()));
+    return Unexpected(map_mmdgltf_status(model.code()));
   }
 
   const auto vbufs = model->vertex_buffers();
   if (!vbufs) {
-    return Unexpected<ModelLoadError>(ModelLoadError::CorruptData);
+    return Unexpected(ModelLoadError::CorruptData);
   }
 
   const auto indices = model->indices();
   if (!indices) {
-    return Unexpected<ModelLoadError>(ModelLoadError::CorruptData);
+    return Unexpected(ModelLoadError::CorruptData);
   }
 
   ModelExpect<ModelData> result{ntf::in_place};
@@ -214,6 +214,19 @@ Expected<ModelData, ModelLoadError> ModelLoader::load_file(std::string_view path
       mb.ik_target_index = b.ik_target_index;
       mb.ik_loop_count = b.ik_loop_count;
       mb.ik_limit_angle = b.ik_limit_angle;
+      if (b.ik_links) {
+        miku_assert(b.ik_link_count > 0);
+        mb.ik_links.reserve(b.ik_link_count);
+        for (u32 k = 0; k < b.ik_link_count; ++k) {
+          const auto& link = b.ik_links[k];
+          ModelIkLink ml{};
+          ml.bone_index = link.bone_index;
+          ml.has_limits = (link.has_limits != 0);
+          ml.min_angle = ran::Vec3f32{link.min_angle.x, link.min_angle.y, link.min_angle.z};
+          ml.max_angle = ran::Vec3f32{link.max_angle.x, link.max_angle.y, link.max_angle.z};
+          mb.ik_links.push_back(ml);
+        }
+      }
       result->bones.push_back(std::move(mb));
     }
   }
