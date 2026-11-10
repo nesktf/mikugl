@@ -1,9 +1,9 @@
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+
 #include "animation/ik_solver.hpp"
 #include "animation/skeleton.hpp"
 #include "model/model_loader.hpp"
-
-#include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cmath>
 #include <filesystem>

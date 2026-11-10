@@ -26,6 +26,11 @@ uniform vec3 u_light_dir;
 uniform vec3 u_light_color;
 uniform vec3 u_camera_pos;
 
+uniform int u_point_light_count;
+uniform vec3 u_point_light_pos[16];
+uniform vec3 u_point_light_color[16];
+uniform vec2 u_point_light_params[16]; // x = radius, y = intensity
+
 out vec4 frag_color;
 
 float compute_pcf_shadow(vec4 shadow_coord) {
@@ -91,6 +96,28 @@ void main() {
   float spec_factor = pow(max(dot(normal, half_dir), 0.0), max(u_shininess, 1.0));
   vec3 specular = u_specular_color * u_light_color * spec_factor * shadow;
 
-  vec3 final_rgb = base_color.rgb * lighting + specular;
+  vec3 point_diffuse = vec3(0.0);
+  vec3 point_specular = vec3(0.0);
+  int count = clamp(u_point_light_count, 0, 16);
+  for (int i = 0; i < count; ++i) {
+    vec3 to_light = u_point_light_pos[i] - v_world_pos;
+    float dist = length(to_light);
+    float radius = max(u_point_light_params[i].x, 0.001);
+    float intensity = u_point_light_params[i].y;
+    if (dist < radius && intensity > 0.0) {
+      vec3 pt_dir = to_light / max(dist, 0.0001);
+      float atten = clamp(1.0 - (dist / radius), 0.0, 1.0);
+      atten = atten * atten * intensity;
+
+      float pt_ndl = max(dot(normal, pt_dir), 0.0);
+      point_diffuse += u_point_light_color[i] * (pt_ndl * atten);
+
+      vec3 pt_half = normalize(pt_dir + view_dir);
+      float pt_spec = pow(max(dot(normal, pt_half), 0.0), max(u_shininess, 1.0));
+      point_specular += u_specular_color * u_point_light_color[i] * (pt_spec * atten);
+    }
+  }
+
+  vec3 final_rgb = base_color.rgb * (lighting + point_diffuse) + specular + point_specular;
   frag_color = vec4(final_rgb, base_color.a);
 }

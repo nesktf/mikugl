@@ -1,4 +1,4 @@
-#include "ui/loading_indicator.hpp"
+#include "ui/ui_manager.hpp"
 
 #include <cmath>
 #include <imgui.h>
@@ -42,7 +42,7 @@ void draw_spinner(f32 radius, f32 thickness, ImU32 color) {
 
 } // namespace
 
-void LoadingIndicator::draw(bool is_loading, std::string_view path) {
+void UiManager::draw_loading_indicator(bool is_loading, std::string_view path) {
   if (!is_loading) {
     return;
   }
@@ -56,6 +56,7 @@ void LoadingIndicator::draw(bool is_loading, std::string_view path) {
     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
 
+  const DeferFn end = ImGui::End;
   if (ImGui::Begin("##ModelLoadingIndicator", nullptr, flags)) {
     ImGui::Spacing();
     ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 36.0f) * 0.5f);
@@ -79,7 +80,6 @@ void LoadingIndicator::draw(bool is_loading, std::string_view path) {
     ImGui::TextDisabled("%s", path_str.c_str());
     ImGui::Spacing();
   }
-  ImGui::End();
 }
 
 } // namespace mikugl

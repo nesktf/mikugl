@@ -153,6 +153,7 @@ Expected<ModelData, ModelLoadError> ModelLoader::load_file(std::string_view path
       submesh.material_index = i++;
       submesh.index_offset = current_offset;
       submesh.index_count = src_mat.index_count;
+      submesh.visible = true;
       current_offset += src_mat.index_count;
 
       result->submeshes.push_back(std::move(submesh));

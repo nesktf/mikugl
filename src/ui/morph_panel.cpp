@@ -1,5 +1,8 @@
-#include "ui/morph_panel.hpp"
+#include "ui/ui_manager.hpp"
 
+#include "scene/scene.hpp"
+
+#include <fmt/format.h>
 #include <imgui.h>
 
 #include <algorithm>
@@ -41,6 +44,7 @@ void draw_morph_category(MorphManager& morph_manager, MorphCategory category,
   }
   ImGui::Separator();
 
+  const DeferFn end_child = ImGui::EndChild;
   if (ImGui::BeginChild("MorphList", ImVec2(0, 0), false)) {
     const auto morphs = morph_manager.morphs();
     for (u32 i = 0; i < morphs.size(); ++i) {
@@ -58,7 +62,7 @@ void draw_morph_category(MorphManager& morph_manager, MorphCategory category,
         }
       }
       if (display_name.empty()) {
-        display_name = "Morph_" + std::to_string(i);
+        display_name = fmt::format("Morph_{}", i);
       }
 
       if (!matches_filter(display_name, filter)) {
@@ -93,14 +97,11 @@ void draw_morph_category(MorphManager& morph_manager, MorphCategory category,
       ImGui::PopID();
     }
   }
-  ImGui::EndChild();
 }
 
-} // namespace
-
-void MorphPanel::draw(MorphManager& morph_manager, bool* p_open) {
+void do_draw(MorphManager& morph_manager, bool* p_open) {
+  const DeferFn end = ImGui::End;
   if (!ImGui::Begin("Facial Expressions", p_open)) {
-    ImGui::End();
     return;
   }
 
@@ -124,7 +125,20 @@ void MorphPanel::draw(MorphManager& morph_manager, bool* p_open) {
     }
     ImGui::EndTabBar();
   }
+}
 
+} // namespace
+
+void UiManager::draw_morph_panel(Scene& scene, bool* p_open) {
+  auto* model = scene.selected_model();
+  if (model && model->morph_manager) {
+    do_draw(*model->morph_manager, p_open);
+    return;
+  }
+
+  if (ImGui::Begin("Facial Expressions", p_open)) {
+    ImGui::TextDisabled("No model selected. Select a model in Scene Nodes to edit expressions.");
+  }
   ImGui::End();
 }
 

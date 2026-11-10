@@ -41,6 +41,7 @@ public:
     ran::Mat4f32 inv_bind_matrix;
     ran::Mat4f32 skinning_matrix;
     u32 original_index;
+    bool visible;
   };
 
   struct RootArmature {
@@ -71,6 +72,12 @@ public:
 
   void set_bone_rotation(u32 bone_index, const ran::Quatf32& rotation);
   void set_bone_translation(u32 bone_index, const ran::Vec3f32& translation);
+  void set_bone_scale(u32 bone_index, const ran::Vec3f32& scale);
+
+  void reset_node_pose(u32 sorted_index) noexcept;
+  void set_all_bones_visible(bool visible) noexcept;
+  void set_node_world_position(u32 sorted_index, const ran::Vec3f32& world_pos) noexcept;
+  void set_node_world_rotation(u32 sorted_index, const ran::Quatf32& world_rot) noexcept;
 
   i32 find_bone_index(std::string_view name) const noexcept;
   const BoneNode& bone(u32 index) const;
@@ -89,6 +96,8 @@ public:
   u32 bone_count() const noexcept { return (u32)_bones.size(); }
 
   Span<const BoneNode> bones() const noexcept { return _bones; }
+
+  Span<BoneNode> bones() noexcept { return _bones; }
 
   Span<const ran::Mat4f32> skinning_matrices() const noexcept { return _skinning_matrices; }
 
@@ -111,5 +120,7 @@ private:
   bool _ik_enabled;
   u32 _ubo;
 };
+
+std::string format_bone_label(const Skeleton::BoneNode& b, u32 index);
 
 } // namespace mikugl

@@ -65,7 +65,7 @@ void TextureManager::upload_textures(Span<const TextureCpuBuffer> textures) {
   for (size_t i = 0; i < textures.size(); ++i) {
     const TextureCpuBuffer& buf = textures[i];
     if (!buf.valid || buf.pixels.empty() || buf.width <= 0 || buf.height <= 0) {
-      _textures[i] = 0;
+      //_textures[i] = 0;
       continue;
     }
 

@@ -1,7 +1,7 @@
-#include "animation/skeleton.hpp"
-
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+
+#include "animation/skeleton.hpp"
 
 using namespace mikugl;
 
@@ -276,4 +276,32 @@ TEST_CASE("Skeleton root armatures and hierarchical DFS ordering", "[skeleton]")
   REQUIRE_THAT(skinned_head.x, Catch::Matchers::WithinAbs(1.0f, 0.0001f));
   REQUIRE_THAT(skinned_head.y, Catch::Matchers::WithinAbs(12.0f, 0.0001f));
   REQUIRE_THAT(skinned_head.z, Catch::Matchers::WithinAbs(3.0f, 0.0001f));
+}
+
+TEST_CASE("Skeleton bone scale and world-space transform helpers", "[skeleton]") {
+  ModelBone b0{};
+  b0.name_en = "Root";
+  b0.position = ran::Vec3f32{0.0f, 0.0f, 0.0f};
+  b0.parent_index = -1;
+
+  ModelBone b1{};
+  b1.name_en = "Child";
+  b1.position = ran::Vec3f32{0.0f, 5.0f, 0.0f};
+  b1.parent_index = 0;
+
+  std::array<ModelBone, 2> bones = {b0, b1};
+  Skeleton skel = Skeleton::from_model_bones(bones).value();
+
+  skel.set_bone_scale(0, ran::Vec3f32{1.0f, 2.0f, 1.0f});
+  skel.update_pose();
+  REQUIRE_THAT(skel.node(1).world_position.y, Catch::Matchers::WithinAbs(10.0f, 0.001f));
+
+  skel.reset_node_pose(0);
+  REQUIRE_THAT(skel.node(1).world_position.y, Catch::Matchers::WithinAbs(5.0f, 0.001f));
+
+  skel.set_node_world_position(1, ran::Vec3f32{3.0f, 8.0f, -2.0f});
+  skel.update_pose();
+  REQUIRE_THAT(skel.node(1).world_position.x, Catch::Matchers::WithinAbs(3.0f, 0.001f));
+  REQUIRE_THAT(skel.node(1).world_position.y, Catch::Matchers::WithinAbs(8.0f, 0.001f));
+  REQUIRE_THAT(skel.node(1).world_position.z, Catch::Matchers::WithinAbs(-2.0f, 0.001f));
 }

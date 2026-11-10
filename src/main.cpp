@@ -1,29 +1,18 @@
-#include "animation/morph.hpp"
-#include "animation/skeleton.hpp"
 #include "core/command_stack.hpp"
+#include "io/screenshot.hpp"
 #include "model/async_loader.hpp"
-#include "model/model_data.hpp"
 #include "render/debug_draw.hpp"
-#include "render/gl_mesh.hpp"
 #include "render/grid.hpp"
 #include "render/shader_program.hpp"
 #include "render/shadow_map.hpp"
-#include "render/texture_manager.hpp"
 #include "render/toon_manager.hpp"
-#include "scene/camera.hpp"
-#include "ui/loading_indicator.hpp"
-#include "ui/morph_panel.hpp"
-#include "ui/theme.hpp"
+#include "scene/scene.hpp"
+#include "ui/ui_manager.hpp"
 #include <embedded_shaders.hpp>
 
+#include <SDL2/SDL.h>
 #include <SDL_video.h>
 #include <glad/glad.h>
-
-#include <SDL2/SDL.h>
-
-#include <imgui.h>
-#include <imgui_impl_opengl3.h>
-#include <imgui_impl_sdl2.h>
 
 #include <cstdio>
 #include <filesystem>
@@ -108,49 +97,6 @@ Optional<SDLContext> init_sdl(u32 width, u32 height) {
   return Optional<SDLContext>{std::in_place, win, gl};
 }
 
-void init_imgui(const stdfs::path& exe_dir, SDL_Window* window, SDL_GLContext gl_context) {
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImGuiIO& io = ImGui::GetIO();
-  MIKU_UNUSED(io);
-
-  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-  io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
-  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-
-  Theme::apply_dark_theme();
-
-  const f32 main_scale = ImGui_ImplSDL2_GetContentScaleForDisplay(0);
-  ImGuiStyle& style = ImGui::GetStyle();
-  style.ScaleAllSizes(main_scale);
-
-  const auto find_font = [&](std::string_view font_name) -> std::string {
-    const auto path = exe_dir / "data" / "fonts" / font_name;
-    return stdfs::exists(path) ? path : "";
-  };
-
-  const f32 font_size = 16.0f * (main_scale > 0.0f ? main_scale : 1.0f);
-
-  if (const auto base_font = find_font("DroidSans.ttf"); !base_font.empty()) {
-    io.Fonts->AddFontFromFileTTF(base_font.c_str(), font_size);
-  } else {
-    fprintf(stderr, "Base font not found: %s\n", base_font.c_str());
-    io.Fonts->AddFontDefault();
-  }
-
-  if (const auto jp_font = find_font("DroidSansJapanese.ttf"); !jp_font.empty()) {
-    ImFontConfig config;
-    config.MergeMode = true;
-    io.Fonts->AddFontFromFileTTF(jp_font.c_str(), font_size, &config,
-                                 io.Fonts->GetGlyphRangesJapanese());
-  } else {
-    fprintf(stderr, "JP Font not found: %s\n", jp_font.c_str());
-  }
-
-  ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
-  ImGui_ImplOpenGL3_Init(nullptr);
-}
-
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -183,7 +129,8 @@ int main(int argc, char* argv[]) {
     SDL_DestroyWindow(sdl->win);
     SDL_Quit();
   };
-  init_imgui(exe_dir, sdl->win, sdl->gl);
+
+  UiManager ui_manager(exe_dir, sdl->win, sdl->gl);
 
   auto grid = Grid::create();
   if (!grid) {
@@ -218,22 +165,11 @@ int main(int argc, char* argv[]) {
 
   auto toon_manager = ToonManager::create();
   auto shadow_map = ShadowMap::create();
-  auto texture_manager = TextureManager::create();
-  GlMesh gl_mesh;
 
-  Optional<Skeleton> skeleton;
-  Optional<MorphManager> morph_manager;
-  bool show_skeleton = true;
-  f32 test_arm_pose = 0.0f;
-  f32 test_leg_ik_height = 0.0f;
-  f32 test_leg_ik_front_back = 0.0f;
-  i32 selected_bone_idx = -1;
-
-  Vec<ModelSubmesh> model_submeshes;
-  Vec<ModelMaterial> model_materials;
-  std::string loaded_model_name;
-
+  Scene scene{};
+  CommandStack command_stack{};
   AsyncLoader async_loader;
+
   const auto default_model_path = exe_dir / "model" / "default" / "Miku_Hatsune_Ver2.pmd";
   if (!stdfs::exists(default_model_path)) {
     fprintf(stderr, "Migu not found at '%s'\n", default_model_path.c_str());
@@ -241,27 +177,17 @@ int main(int argc, char* argv[]) {
     async_loader.request_load(default_model_path.c_str());
   }
 
-  MmdCamera camera{};
-  CommandStack command_stack{};
-  ran::Vec3f32 light_color{1.0f, 1.0f, 1.0f};
-  ran::Vec3f32 light_dir{0.5f, 1.0f, 0.7f};
-
   bool should_exit = false;
-  bool show_scene_panel = true;
-  bool show_bone_panel = true;
-  bool show_morph_panel = true;
-  bool show_inspector_panel = true;
-  bool show_timeline_panel = true;
-  bool show_demo_window = false;
-
   bool is_right_dragging = false;
   bool is_middle_dragging = false;
+  bool hotkey_screenshot = false;
 
-  const auto& io = ImGui::GetIO();
   while (!should_exit) {
+    const ran::Vec2f32 disp_size = ui_manager.display_size();
+
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
-      ImGui_ImplSDL2_ProcessEvent(&e);
+      ui_manager.process_event(e);
       if (e.type == SDL_QUIT) {
         should_exit = true;
       }
@@ -271,13 +197,19 @@ int main(int argc, char* argv[]) {
       }
 
       if (e.type == SDL_MOUSEBUTTONDOWN) {
-        if (!io.WantCaptureMouse) {
+        if (!ui_manager.wants_capture_mouse()) {
           const bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
           if (e.button.button == SDL_BUTTON_RIGHT) {
             is_right_dragging = true;
           } else if (e.button.button == SDL_BUTTON_MIDDLE ||
                      (shift && e.button.button == SDL_BUTTON_LEFT)) {
             is_middle_dragging = true;
+          } else if (e.button.button == SDL_BUTTON_LEFT && !shift && scene.is_posing_mode()) {
+            if (auto* mdl = scene.selected_model()) {
+              mdl->selected_bone_idx = scene.pick_bone_screen_space(static_cast<f32>(e.button.x),
+                                                                    static_cast<f32>(e.button.y),
+                                                                    disp_size.x, disp_size.y);
+            }
           }
         }
       }
@@ -292,276 +224,117 @@ int main(int argc, char* argv[]) {
 
       if (e.type == SDL_MOUSEMOTION) {
         if (is_right_dragging) {
-          camera.orbit(static_cast<f32>(e.motion.xrel), static_cast<f32>(e.motion.yrel));
+          scene.camera().orbit(static_cast<f32>(e.motion.xrel), static_cast<f32>(e.motion.yrel));
         } else if (is_middle_dragging) {
-          camera.pan(static_cast<f32>(e.motion.xrel), static_cast<f32>(e.motion.yrel));
+          scene.camera().pan(static_cast<f32>(e.motion.xrel), static_cast<f32>(e.motion.yrel));
+        } else if (!ui_manager.wants_capture_mouse() && scene.is_posing_mode()) {
+          if (auto* mdl = scene.selected_model()) {
+            mdl->hovered_bone_idx =
+              scene.pick_bone_screen_space(static_cast<f32>(e.motion.x),
+                                           static_cast<f32>(e.motion.y), disp_size.x, disp_size.y);
+          }
         }
       }
 
       if (e.type == SDL_MOUSEWHEEL) {
-        if (!io.WantCaptureMouse) {
-          camera.zoom(static_cast<f32>(e.wheel.y));
+        if (!ui_manager.wants_capture_mouse()) {
+          scene.camera().zoom(static_cast<f32>(e.wheel.y));
         }
       }
 
       if (e.type == SDL_KEYDOWN) {
-        if (e.key.keysym.sym == SDLK_ESCAPE) {
-          should_exit = true;
-        }
+        if (e.key.keysym.sym == SDLK_F2) {
+          hotkey_screenshot = true;
+        } else if (!ui_manager.wants_capture_keyboard()) {
+          if (e.key.keysym.sym == SDLK_ESCAPE) {
+            should_exit = true;
+          } else if (e.key.keysym.sym == SDLK_HOME) {
+            scene.camera().reset();
+          } else if (e.key.keysym.sym == SDLK_TAB) {
+            scene.set_posing_mode(!scene.is_posing_mode());
+          }
 
-        if (e.key.keysym.sym == SDLK_HOME) {
-          camera.reset();
-        }
-
-        const bool ctrl = (SDL_GetModState() & KMOD_CTRL) != 0;
-        const bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
-        if (ctrl && !shift && e.key.keysym.sym == SDLK_z) {
-          const auto res = command_stack.undo();
-          MIKU_UNUSED(res);
-        } else if ((ctrl && e.key.keysym.sym == SDLK_y) ||
-                   (ctrl && shift && e.key.keysym.sym == SDLK_z)) {
-          const auto res = command_stack.redo();
-          MIKU_UNUSED(res);
+          const bool ctrl = (SDL_GetModState() & KMOD_CTRL) != 0;
+          const bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
+          if (ctrl && e.key.keysym.sym == SDLK_o) {
+            ui_manager.open_load_model_modal();
+          } else if (ctrl && !shift && e.key.keysym.sym == SDLK_z) {
+            const auto res = command_stack.undo();
+            MIKU_UNUSED(res);
+          } else if ((ctrl && e.key.keysym.sym == SDLK_y) ||
+                     (ctrl && shift && e.key.keysym.sym == SDLK_z)) {
+            const auto res = command_stack.redo();
+            MIKU_UNUSED(res);
+          }
         }
       }
     }
 
     auto result = async_loader.poll_result();
     if (result) {
-      ModelData& data = *result;
-      loaded_model_name = data.name.empty() ? "MMD Model" : std::move(data.name);
-      skeleton = Skeleton::from_model_bones(data.bones).value();
-      morph_manager = MorphManager(data.vertices, std::move(data.morphs));
-      gl_mesh.upload(data.vertices, data.indices);
-      texture_manager.upload_textures(data.textures);
-      model_submeshes = std::move(data.submeshes);
-      model_materials = std::move(data.materials);
-      test_arm_pose = 0.0f;
-      selected_bone_idx = -1;
+      scene.add_model(std::move(*result), async_loader.current_path());
     } else if (result.error() != ModelLoadError::NotYetLoaded) {
       const auto path = async_loader.current_path();
-      fprintf(stderr, "Failed to load model: %.*s\n", (int)path.size(), path.data());
+      fprintf(stderr, "Failed to load model: %.*s\n", static_cast<int>(path.size()), path.data());
+      ui_manager.show_toast("Failed to load model", true);
     }
 
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
-    ImGui::NewFrame();
-
-    const auto dockspace_id = ImGui::GetID("MikuGLDockSpace");
-    const auto* main_viewport = ImGui::GetMainViewport();
-    ImGui::DockSpaceOverViewport(dockspace_id, main_viewport,
-                                 ImGuiDockNodeFlags_PassthruCentralNode);
-
-    if (ImGui::BeginMainMenuBar()) {
-      if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("Load Model...", "Ctrl+O")) {
-          // TODO: Load PMD/PMX model
-        }
-        if (ImGui::MenuItem("Export PNG...", "Ctrl+E")) {
-          // TODO: Export PNG screenshot
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Exit", "Alt+F4")) {
-          should_exit = true;
-        }
-        ImGui::EndMenu();
-      }
-
-      if (ImGui::BeginMenu("Edit")) {
-        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, command_stack.can_undo())) {
-          const auto res = command_stack.undo();
-          MIKU_UNUSED(res);
-        }
-        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, command_stack.can_redo())) {
-          const auto res = command_stack.redo();
-          MIKU_UNUSED(res);
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Clear History")) {
-          command_stack.clear();
-        }
-        ImGui::EndMenu();
-      }
-
-      if (ImGui::BeginMenu("View")) {
-        if (ImGui::MenuItem("Reset Camera", "Home")) {
-          camera.reset();
-        }
-        ImGui::Separator();
-        ImGui::MenuItem("Scene Nodes", nullptr, &show_scene_panel);
-        ImGui::MenuItem("Bone Hierarchy", nullptr, &show_bone_panel);
-        ImGui::MenuItem("Facial Expressions", nullptr, &show_morph_panel);
-        ImGui::MenuItem("Inspector", nullptr, &show_inspector_panel);
-        ImGui::MenuItem("Timeline", nullptr, &show_timeline_panel);
-        ImGui::Separator();
-        ImGui::MenuItem("ImGui Demo Window", nullptr, &show_demo_window);
-        ImGui::EndMenu();
-      }
-
-      ImGui::EndMainMenuBar();
+    const auto ui_actions = ui_manager.draw(scene, command_stack, async_loader);
+    if (ui_actions.request_exit) {
+      should_exit = true;
     }
 
-    if (show_scene_panel) {
-      if (ImGui::Begin("Scene Nodes", &show_scene_panel)) {
-        if (gl_mesh.is_valid()) {
-          ImGui::Text("Model: %s", loaded_model_name.c_str());
-          ImGui::Text("Vertices: %u, Indices: %u", gl_mesh.vertex_count(), gl_mesh.index_count());
-          ImGui::Separator();
-          ImGui::Text("Submeshes (%zu):", model_submeshes.size());
-          for (size_t i = 0; i < model_submeshes.size(); ++i) {
-            const auto& sm = model_submeshes[i];
-            ImGui::BulletText("[%zu] %s (count: %u)", i, sm.name.c_str(), sm.index_count);
-          }
-        } else {
-          ImGui::TextDisabled("No model loaded");
-        }
-      }
-      ImGui::End();
-    }
-
-    if (show_bone_panel) {
-      if (ImGui::Begin("Bone Hierarchy", &show_bone_panel)) {
-        ImGui::Checkbox("Show Skeleton Overlay", &show_skeleton);
-        ImGui::Separator();
-        if (skeleton) {
-          ImGui::Text("Total Bones: %u", skeleton->bone_count());
-          ImGui::SameLine();
-          bool ik_active = skeleton->is_ik_enabled();
-          if (ImGui::Checkbox("Enable IK", &ik_active)) {
-            skeleton->set_ik_enabled(ik_active);
-            skeleton->update_pose();
-          }
-
-          if (ImGui::Button("Reset Pose")) {
-            test_arm_pose = 0.0f;
-            test_leg_ik_height = 0.0f;
-            test_leg_ik_front_back = 0.0f;
-            skeleton->reset_pose();
-            if (morph_manager) {
-              morph_manager->reset_all();
-            }
-          }
-          ImGui::SameLine();
-          if (ImGui::SliderFloat("Arm Pose Test", &test_arm_pose, -90.0f, 90.0f, "%.1f deg")) {
-            const i32 left_arm = skeleton->find_bone_index("左腕");
-            const i32 right_arm = skeleton->find_bone_index("右腕");
-            if (left_arm >= 0) {
-              skeleton->set_bone_rotation(
-                static_cast<u32>(left_arm),
-                ran::to_quat(ran::rad(-test_arm_pose), ran::Vec3f32{0.0f, 0.0f, 1.0f}));
-            }
-            if (right_arm >= 0) {
-              skeleton->set_bone_rotation(
-                static_cast<u32>(right_arm),
-                ran::to_quat(ran::rad(test_arm_pose), ran::Vec3f32{0.0f, 0.0f, 1.0f}));
-            }
-            skeleton->update_pose();
-          }
-
-          bool update_leg = false;
-          if (ImGui::SliderFloat("Leg IK Height", &test_leg_ik_height, 0.0f, 4.0f, "%.2f")) {
-            update_leg = true;
-          }
-          if (ImGui::SliderFloat("Leg IK Depth (+Front/-Back)", &test_leg_ik_front_back, -4.0f,
-                                 4.0f, "%.2f")) {
-            update_leg = true;
-          }
-          if (update_leg) {
-            const i32 left_foot_ik = skeleton->find_bone_index("左足ＩＫ");
-            if (left_foot_ik >= 0) {
-              skeleton->set_bone_translation(
-                static_cast<u32>(left_foot_ik),
-                ran::Vec3f32{0.0f, test_leg_ik_height, test_leg_ik_front_back});
-            }
-            skeleton->update_pose();
-          }
-
-          ImGui::Separator();
-          if (ImGui::BeginChild("BoneList", ImVec2(0, 0), true)) {
-            const auto bones = skeleton->bones();
-            for (u32 i = 0; i < bones.size(); ++i) {
-              const auto& b = bones[i];
-              const bool is_sel = (selected_bone_idx == static_cast<i32>(i));
-              std::string label = b.name_en.empty() ? b.name_jp : b.name_en;
-              if (label.empty()) {
-                label = "Bone_" + std::to_string(i);
-              }
-              if (ImGui::Selectable(label.c_str(), is_sel)) {
-                selected_bone_idx = static_cast<i32>(i);
-              }
-            }
-            ImGui::EndChild();
-          }
-        } else {
-          ImGui::TextDisabled("No skeleton loaded");
-        }
-      }
-      ImGui::End();
-    }
-
-    if (show_inspector_panel) {
-      if (ImGui::Begin("Inspector", &show_inspector_panel)) {
-        ImGui::TextDisabled("Transform inspector");
-        ImGui::Spacing();
-        ImGui::SeparatorText("Directional Light");
-        ImGui::ColorEdit3("Light Color", light_color.data());
-        ImGui::DragFloat3("Light Direction", light_dir.data(), 0.01f, -1.0f, 1.0f);
-      }
-      ImGui::End();
-    }
-
-    if (show_timeline_panel) {
-      if (ImGui::Begin("Timeline", &show_timeline_panel)) {
-        ImGui::TextDisabled("Animation timeline");
-        // TODO: Playback controls and keyframe tracks
-      }
-      ImGui::End();
-    }
-
-    if (show_morph_panel && morph_manager) {
-      MorphPanel::draw(*morph_manager, &show_morph_panel);
-    }
-
-    if (show_demo_window) {
-      ImGui::ShowDemoWindow(&show_demo_window);
-    }
-
-    LoadingIndicator::draw(async_loader.is_loading(), async_loader.current_path());
-
-    ImGui::Render();
-
-    const f32 display_w = io.DisplaySize.x;
-    const f32 display_h = io.DisplaySize.y;
+    const ran::Vec2f32 cur_disp = ui_manager.display_size();
+    const f32 display_w = cur_disp.x;
+    const f32 display_h = cur_disp.y;
     const f32 aspect = (display_h > 0.0f) ? (display_w / display_h) : 1.0f;
-    const ran::Mat4f32 view = camera.compute_view_matrix();
-    const ran::Mat4f32 proj = camera.compute_projection_matrix(aspect);
+    const ran::Mat4f32 view = scene.camera().compute_view_matrix();
+    const ran::Mat4f32 proj = scene.camera().compute_projection_matrix(aspect);
 
+    const auto& dir_light = scene.lights().directional_light();
     const auto [light_view, light_proj] =
-      shadow_map.compute_light_matrices(camera.target(), light_dir);
+      shadow_map.compute_light_matrices(scene.camera().target(), dir_light.direction);
     const ran::Mat4f32 light_view_proj = light_proj * light_view;
-    if (skeleton) {
-      skeleton->update_ubo();
-      skeleton->bind_ubo(2);
+
+    for (auto& mdl : scene.models()) {
+      if (!mdl.visible || !mdl.gl_mesh.is_valid()) {
+        continue;
+      }
+      if (mdl.skeleton) {
+        mdl.skeleton->update_ubo();
+      }
+      if (mdl.morph_manager && mdl.morph_manager->evaluate()) {
+        mdl.gl_mesh.update_vertices(mdl.morph_manager->deformed_vertices());
+      }
     }
 
-    if (morph_manager && morph_manager->evaluate()) {
-      gl_mesh.update_vertices(morph_manager->deformed_vertices());
-    }
-
-    if (gl_mesh.is_valid()) {
+    const bool has_shadow_casters = scene.has_visible_models() && dir_light.enabled;
+    if (has_shadow_casters) {
       glEnable(GL_DEPTH_TEST);
       glDepthFunc(GL_LESS);
       shadow_map.bind_fbo();
       shadow_shader->bind();
-      shadow_shader->set_uniform_mat4("u_model", ran::Mat4f32::identity());
       shadow_shader->set_uniform_mat4("u_light_view", light_view);
       shadow_shader->set_uniform_mat4("u_light_proj", light_proj);
-      shadow_shader->set_uniform_int("u_skinning_enabled", (i32)skeleton.has_value());
-      gl_mesh.bind();
-      for (const auto& sm : model_submeshes) {
-        gl_mesh.draw_submesh(sm.index_offset, sm.index_count);
+
+      for (const auto& mdl : scene.models()) {
+        if (!mdl.visible || !mdl.gl_mesh.is_valid()) {
+          continue;
+        }
+        shadow_shader->set_uniform_mat4("u_model", mdl.compute_model_matrix());
+        shadow_shader->set_uniform_int("u_skinning_enabled",
+                                       static_cast<i32>(mdl.skeleton.has_value()));
+        if (mdl.skeleton) {
+          mdl.skeleton->bind_ubo(2);
+        }
+        mdl.gl_mesh.bind();
+        for (const auto& sm : mdl.submeshes) {
+          if (sm.visible) {
+            mdl.gl_mesh.draw_submesh(sm.index_offset, sm.index_count);
+          }
+        }
+        mdl.gl_mesh.unbind();
       }
-      gl_mesh.unbind();
       shadow_map.unbind_fbo(static_cast<i32>(display_w), static_cast<i32>(display_h));
     }
 
@@ -569,64 +342,80 @@ int main(int argc, char* argv[]) {
     glClearColor(0.18f, 0.18f, 0.19f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    shadow_map.bind_texture(3);
-    grid->render(view, proj, light_view_proj, gl_mesh.is_valid());
+    if (scene.is_grid_visible()) {
+      shadow_map.bind_texture(3);
+      grid->render(view, proj, light_view_proj, has_shadow_casters);
+    }
 
-    if (gl_mesh.is_valid()) {
+    if (scene.has_visible_models()) {
       glEnable(GL_DEPTH_TEST);
       glDepthFunc(GL_LESS);
 
       mmd_shader->bind();
-      mmd_shader->set_uniform_mat4("u_model", ran::Mat4f32::identity());
       mmd_shader->set_uniform_mat4("u_view", view);
       mmd_shader->set_uniform_mat4("u_proj", proj);
       mmd_shader->set_uniform_mat4("u_light_view_proj", light_view_proj);
-      mmd_shader->set_uniform_vec3("u_light_dir", light_dir);
-      mmd_shader->set_uniform_vec3("u_light_color", light_color);
-      mmd_shader->set_uniform_vec3("u_camera_pos", camera.compute_position());
-      mmd_shader->set_uniform_int("u_skinning_enabled", (i32)skeleton.has_value());
+      mmd_shader->set_uniform_vec3("u_camera_pos", scene.camera().compute_position());
+      scene.lights().upload_to_shader(*mmd_shader);
       shadow_map.bind_texture(3);
-      mmd_shader->set_uniform_int("u_has_shadow", 1);
-      gl_mesh.bind();
+      mmd_shader->set_uniform_int("u_has_shadow", has_shadow_casters ? 1 : 0);
 
-      for (const auto& sm : model_submeshes) {
-        if (sm.material_index < model_materials.size()) {
-          const auto& mat = model_materials[sm.material_index];
-          if (mat.is_double_sided) {
-            glDisable(GL_CULL_FACE);
-          } else {
-            glEnable(GL_CULL_FACE);
-            glCullFace(GL_BACK);
-          }
-          texture_manager.bind_texture(mat.texture_index, 0);
-          mmd_shader->set_uniform_int("u_has_diffuse", mat.texture_index >= 0 ? 1 : 0);
-          mmd_shader->set_uniform_vec4("u_diffuse_color", mat.diffuse);
-          mmd_shader->set_uniform_vec3("u_specular_color", mat.specular);
-          mmd_shader->set_uniform_vec3("u_ambient_color", mat.ambient);
-          mmd_shader->set_uniform_float("u_shininess", mat.shininess);
-
-          if (mat.sphere_texture_index >= 0 && mat.sphere_mode > 0) {
-            texture_manager.bind_texture(mat.sphere_texture_index, 1);
-            mmd_shader->set_uniform_int("u_has_sphere", 1);
-            mmd_shader->set_uniform_int("u_sphere_mode", mat.sphere_mode);
-          } else {
-            mmd_shader->set_uniform_int("u_has_sphere", 0);
-            mmd_shader->set_uniform_int("u_sphere_mode", 0);
-          }
-
-          if (mat.toon_sharing_flag == 1) {
-            toon_manager.bind_shared_toon(static_cast<u8>(mat.toon_index), 2);
-            mmd_shader->set_uniform_int("u_has_toon", 1);
-          } else if (mat.toon_index >= 0) {
-            texture_manager.bind_texture(mat.toon_index, 2);
-            mmd_shader->set_uniform_int("u_has_toon", 1);
-          } else {
-            mmd_shader->set_uniform_int("u_has_toon", 0);
-          }
+      for (const auto& mdl : scene.models()) {
+        if (!mdl.visible || !mdl.gl_mesh.is_valid()) {
+          continue;
         }
-        gl_mesh.draw_submesh(sm.index_offset, sm.index_count);
+        mmd_shader->set_uniform_mat4("u_model", mdl.compute_model_matrix());
+        mmd_shader->set_uniform_int("u_skinning_enabled",
+                                    static_cast<i32>(mdl.skeleton.has_value()));
+        if (mdl.skeleton) {
+          mdl.skeleton->bind_ubo(2);
+        }
+        mdl.gl_mesh.bind();
+
+        for (const auto& sm : mdl.submeshes) {
+          if (!sm.visible) {
+            continue;
+          }
+          if (sm.material_index < mdl.materials.size()) {
+            const auto& mat = mdl.materials[sm.material_index];
+            if (mat.is_double_sided) {
+              glDisable(GL_CULL_FACE);
+            } else {
+              glEnable(GL_CULL_FACE);
+              glCullFace(GL_BACK);
+            }
+            if (mdl.texture_manager) {
+              mdl.texture_manager->bind_texture(mat.texture_index, 0);
+            }
+            mmd_shader->set_uniform_int("u_has_diffuse", mat.texture_index >= 0 ? 1 : 0);
+            mmd_shader->set_uniform_vec4("u_diffuse_color", mat.diffuse);
+            mmd_shader->set_uniform_vec3("u_specular_color", mat.specular);
+            mmd_shader->set_uniform_vec3("u_ambient_color", mat.ambient);
+            mmd_shader->set_uniform_float("u_shininess", mat.shininess);
+
+            if (mat.sphere_texture_index >= 0 && mat.sphere_mode > 0 && mdl.texture_manager) {
+              mdl.texture_manager->bind_texture(mat.sphere_texture_index, 1);
+              mmd_shader->set_uniform_int("u_has_sphere", 1);
+              mmd_shader->set_uniform_int("u_sphere_mode", mat.sphere_mode);
+            } else {
+              mmd_shader->set_uniform_int("u_has_sphere", 0);
+              mmd_shader->set_uniform_int("u_sphere_mode", 0);
+            }
+
+            if (mat.toon_sharing_flag == 1) {
+              toon_manager.bind_shared_toon(static_cast<u8>(mat.toon_index), 2);
+              mmd_shader->set_uniform_int("u_has_toon", 1);
+            } else if (mat.toon_index >= 0 && mdl.texture_manager) {
+              mdl.texture_manager->bind_texture(mat.toon_index, 2);
+              mmd_shader->set_uniform_int("u_has_toon", 1);
+            } else {
+              mmd_shader->set_uniform_int("u_has_toon", 0);
+            }
+          }
+          mdl.gl_mesh.draw_submesh(sm.index_offset, sm.index_count);
+        }
+        mdl.gl_mesh.unbind();
       }
-      gl_mesh.unbind();
       glDisable(GL_CULL_FACE);
 
       glEnable(GL_DEPTH_TEST);
@@ -635,34 +424,80 @@ int main(int argc, char* argv[]) {
       glCullFace(GL_FRONT);
 
       outline_shader->bind();
-      outline_shader->set_uniform_mat4("u_model", ran::Mat4f32::identity());
       outline_shader->set_uniform_mat4("u_view", view);
       outline_shader->set_uniform_mat4("u_proj", proj);
       outline_shader->set_uniform_vec2("u_viewport_size", ran::Vec2f32{display_w, display_h});
-      outline_shader->set_uniform_int("u_skinning_enabled", (i32)skeleton.has_value());
-      gl_mesh.bind();
 
-      for (const auto& sm : model_submeshes) {
-        if (sm.material_index < model_materials.size()) {
-          const auto& mat = model_materials[sm.material_index];
-          if (mat.has_edge && mat.edge_size > 0.0f) {
-            outline_shader->set_uniform_float("u_edge_size", mat.edge_size);
-            outline_shader->set_uniform_vec4("u_edge_color", mat.edge_color);
-            gl_mesh.draw_submesh(sm.index_offset, sm.index_count);
+      for (const auto& mdl : scene.models()) {
+        if (!mdl.visible || !mdl.gl_mesh.is_valid()) {
+          continue;
+        }
+        outline_shader->set_uniform_mat4("u_model", mdl.compute_model_matrix());
+        outline_shader->set_uniform_int("u_skinning_enabled",
+                                        static_cast<i32>(mdl.skeleton.has_value()));
+        if (mdl.skeleton) {
+          mdl.skeleton->bind_ubo(2);
+        }
+        mdl.gl_mesh.bind();
+
+        for (const auto& sm : mdl.submeshes) {
+          if (!sm.visible) {
+            continue;
+          }
+          if (sm.material_index < mdl.materials.size()) {
+            const auto& mat = mdl.materials[sm.material_index];
+            if (mat.has_edge && mat.edge_size > 0.0f) {
+              outline_shader->set_uniform_float("u_edge_size", mat.edge_size);
+              outline_shader->set_uniform_vec4("u_edge_color", mat.edge_color);
+              mdl.gl_mesh.draw_submesh(sm.index_offset, sm.index_count);
+            }
           }
         }
+        mdl.gl_mesh.unbind();
       }
-      gl_mesh.unbind();
       glCullFace(GL_BACK);
       glDisable(GL_CULL_FACE);
       ShaderProgram::unbind();
+    }
 
-      if (show_skeleton && skeleton) {
-        (*debug_draw).begin(proj * view).draw_skeleton(*skeleton, selected_bone_idx).render();
+    if (hotkey_screenshot || ui_actions.request_screenshot) {
+      hotkey_screenshot = false;
+      const auto shot_res = Screenshot::capture_to_screenshots_dir(
+        exe_dir, static_cast<i32>(display_w), static_cast<i32>(display_h));
+      if (shot_res) {
+        printf("Screenshot saved: %s\n", shot_res->c_str());
+        ui_manager.show_toast("Screenshot saved: " + stdfs::path(*shot_res).filename().string());
+      } else {
+        fprintf(stderr, "Failed to save screenshot\n");
+        ui_manager.show_toast("Failed to save screenshot", true);
       }
     }
 
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    {
+      debug_draw->begin(proj * view);
+      if (scene.is_posing_mode()) {
+        if (const auto* active_mdl = scene.selected_model()) {
+          if (active_mdl->visible && active_mdl->skeleton) {
+            debug_draw->draw_skeleton(*active_mdl->skeleton, active_mdl->selected_bone_idx,
+                                      active_mdl->hovered_bone_idx,
+                                      active_mdl->compute_model_matrix());
+          }
+        }
+      }
+
+      const auto pt_lights = scene.lights().point_lights();
+      for (u32 i = 0; i < pt_lights.size(); ++i) {
+        const auto& pl = pt_lights[i];
+        const bool is_sel = (scene.selected_node_type() == SceneNodeType::PointLight &&
+                             scene.selected_point_light_index() == static_cast<i32>(i));
+        if (pl.enabled && (is_sel || scene.is_posing_mode())) {
+          debug_draw->draw_point_light(pl.position, pl.color, pl.radius, is_sel);
+        }
+      }
+      debug_draw->render();
+    }
+
+    ui_manager.render_draw_data();
     SDL_GL_SwapWindow(sdl->win);
   }
   printf("(in Mario voice) ByeBye!\n");

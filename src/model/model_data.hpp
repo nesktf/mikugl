@@ -22,6 +22,7 @@ struct ModelSubmesh {
   u32 material_index;
   u32 index_offset;
   u32 index_count;
+  bool visible = true;
 };
 
 struct ModelMaterial {

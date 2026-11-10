@@ -96,21 +96,68 @@ DebugDraw& DebugDraw::draw_cross(const ran::Vec3f32& pos, f32 size,
   return *this;
 }
 
-DebugDraw& DebugDraw::draw_skeleton(const Skeleton& skeleton, i32 selected_bone) noexcept {
+DebugDraw& DebugDraw::draw_skeleton(const Skeleton& skeleton, i32 selected_bone, i32 hovered_bone,
+                                    const ran::Mat4f32& model_matrix) noexcept {
+  const auto transform_point = [&](const ran::Vec3f32& p) -> ran::Vec3f32 {
+    const ran::Vec4f32 wp = model_matrix * ran::Vec4f32{p.x, p.y, p.z, 1.0f};
+    return ran::Vec3f32{wp.x, wp.y, wp.z};
+  };
+
   const auto bones = skeleton.bones();
   for (size_t i = 0; i < bones.size(); ++i) {
     const auto& b = bones[i];
+    if (!b.visible) {
+      continue;
+    }
     const bool is_selected = (static_cast<i32>(i) == selected_bone);
-    const auto joint_color =
-      is_selected ? ran::Vec4f32{1.0f, 0.85f, 0.2f, 0.95f} : ran::Vec4f32{0.2f, 0.85f, 1.0f, 0.8f};
-    const f32 cross_size = is_selected ? 0.25f : 0.12f;
-    draw_cross(b.world_position, cross_size, joint_color);
+    const bool is_hovered = (!is_selected && static_cast<i32>(i) == hovered_bone);
+
+    ran::Vec4f32 joint_color{0.2f, 0.85f, 1.0f, 0.8f};
+    ran::Vec4f32 line_color{0.3f, 0.75f, 1.0f, 0.55f};
+    f32 cross_size = 0.12f;
+
+    if (is_selected) {
+      joint_color = ran::Vec4f32{1.0f, 0.85f, 0.2f, 0.98f};
+      line_color = ran::Vec4f32{1.0f, 0.9f, 0.3f, 0.95f};
+      cross_size = 0.25f;
+    } else if (is_hovered) {
+      joint_color = ran::Vec4f32{1.0f, 0.52f, 0.18f, 0.95f};
+      line_color = ran::Vec4f32{1.0f, 0.60f, 0.25f, 0.85f};
+      cross_size = 0.20f;
+    }
+
+    const ran::Vec3f32 b_pos = transform_point(b.world_position);
+    draw_cross(b_pos, cross_size, joint_color);
 
     if (b.parent_index >= 0 && (size_t)b.parent_index < bones.size()) {
       const auto& parent = bones[b.parent_index];
-      const auto line_color = is_selected ? ran::Vec4f32{1.0f, 0.9f, 0.3f, 0.9f}
-                                          : ran::Vec4f32{0.3f, 0.75f, 1.0f, 0.55f};
-      draw_line(parent.world_position, b.world_position, line_color);
+      if (parent.visible) {
+        const ran::Vec3f32 p_pos = transform_point(parent.world_position);
+        draw_line(p_pos, b_pos, line_color);
+      }
+    }
+  }
+  return *this;
+}
+
+DebugDraw& DebugDraw::draw_point_light(const ran::Vec3f32& pos, const ran::Vec3f32& color,
+                                       f32 radius, bool is_selected) noexcept {
+  const ran::Vec4f32 marker_color{color.x, color.y, color.z, is_selected ? 1.0f : 0.85f};
+  const f32 cross_size = is_selected ? 0.8f : 0.5f;
+  draw_cross(pos, cross_size, marker_color);
+
+  if (is_selected && radius > 0.0f) {
+    static constexpr i32 segments = 24;
+    const ran::Vec4f32 ring_color{color.x, color.y, color.z, 0.35f};
+    for (i32 i = 0; i < segments; ++i) {
+      const f32 a0 = (static_cast<f32>(i) / static_cast<f32>(segments)) * 6.2831853f;
+      const f32 a1 = (static_cast<f32>(i + 1) / static_cast<f32>(segments)) * 6.2831853f;
+      const f32 c0 = ran::cos(a0) * radius;
+      const f32 s0 = ran::sin(a0) * radius;
+      const f32 c1 = ran::cos(a1) * radius;
+      const f32 s1 = ran::sin(a1) * radius;
+      draw_line(ran::Vec3f32{pos.x + c0, pos.y, pos.z + s0},
+                ran::Vec3f32{pos.x + c1, pos.y, pos.z + s1}, ring_color);
     }
   }
   return *this;

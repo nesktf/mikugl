@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include <fmt/format.h>
+
 namespace mikugl {
 
 namespace {
@@ -182,6 +184,7 @@ BoneExpect<Skeleton> Skeleton::from_model_bones(Span<const ModelBone> model_bone
     bn.local_scale = ran::Vec3f32{1.0f, 1.0f, 1.0f};
     bn.inv_bind_matrix = ran::translate(ran::Mat4f32::identity(), -bn.rest_position);
     bn.original_index = orig_idx;
+    bn.visible = true;
 
     if (mb.parent_index < 0 || mb.parent_index >= (i32)total_bones) {
       bn.parent_index = -1;
@@ -283,8 +286,9 @@ void Skeleton::update_fk() noexcept {
     root.world_position = root.rest_position + root.local_translation;
     root.world_rotation = root.local_rotation;
 
-    locals[root_idx] = ran::translate(ran::Mat4f32::identity(), root.world_position) *
-                       ran::to_mat4(root.world_rotation);
+    locals[root_idx] = ran::scale(ran::translate(ran::Mat4f32::identity(), root.world_position) *
+                                    ran::to_mat4(root.world_rotation),
+                                  root.local_scale);
     models[root_idx] = locals[root_idx];
     root.world_matrix = models[root_idx];
     root.skinning_matrix = models[root_idx] * root.inv_bind_matrix;
@@ -299,13 +303,13 @@ void Skeleton::update_fk() noexcept {
       const auto& parent = _bones[parent_idx];
 
       const auto rest_offset = node.rest_position - parent.rest_position;
-      node.world_position =
-        parent.world_position + (parent.world_rotation * (rest_offset + node.local_translation));
-      node.world_rotation = parent.world_rotation * node.local_rotation;
-
-      locals[i] = ran::translate(ran::Mat4f32::identity(), rest_offset + node.local_translation) *
-                  ran::to_mat4(node.local_rotation);
+      locals[i] =
+        ran::scale(ran::translate(ran::Mat4f32::identity(), rest_offset + node.local_translation) *
+                     ran::to_mat4(node.local_rotation),
+                   node.local_scale);
       models[i] = models[parent_idx] * locals[i];
+      node.world_position = ran::Vec3f32{models[i].x4, models[i].y4, models[i].z4};
+      node.world_rotation = parent.world_rotation * node.local_rotation;
       node.world_matrix = models[i];
       node.skinning_matrix = models[i] * node.inv_bind_matrix;
       miku_assert(node.original_index < _skinning_matrices.size());
@@ -351,6 +355,60 @@ void Skeleton::set_bone_translation(u32 bone_index, const ran::Vec3f32& translat
   _bones[idx].local_translation = translation;
 }
 
+void Skeleton::set_bone_scale(u32 bone_index, const ran::Vec3f32& scale) {
+  miku_assert(bone_index < (u32)_bone_remap.size());
+  const u32 idx = _bone_remap[bone_index];
+  miku_assert(idx < (u32)_bones.size());
+  _bones[idx].local_scale = scale;
+}
+
+void Skeleton::reset_node_pose(u32 sorted_index) noexcept {
+  if (sorted_index >= (u32)_bones.size()) {
+    return;
+  }
+  auto& bn = _bones[sorted_index];
+  bn.local_translation = ran::Vec3f32{0.0f, 0.0f, 0.0f};
+  bn.local_rotation = ran::Quatf32::identity();
+  bn.local_scale = ran::Vec3f32{1.0f, 1.0f, 1.0f};
+  update_pose();
+}
+
+void Skeleton::set_all_bones_visible(bool visible) noexcept {
+  for (auto& bn : _bones) {
+    bn.visible = visible;
+  }
+}
+
+void Skeleton::set_node_world_position(u32 sorted_index, const ran::Vec3f32& world_pos) noexcept {
+  if (sorted_index >= (u32)_bones.size()) {
+    return;
+  }
+  auto& bn = _bones[sorted_index];
+  if (bn.parent_index < 0 || (u32)bn.parent_index >= (u32)_bones.size()) {
+    bn.local_translation = world_pos - bn.rest_position;
+  } else {
+    const auto& parent = _bones[(u32)bn.parent_index];
+    const ran::Mat4f32 inv_parent = ran::inverse(parent.world_matrix);
+    const ran::Vec4f32 local_p =
+      inv_parent * ran::Vec4f32{world_pos.x, world_pos.y, world_pos.z, 1.0f};
+    const ran::Vec3f32 rest_offset = bn.rest_position - parent.rest_position;
+    bn.local_translation = ran::Vec3f32{local_p.x, local_p.y, local_p.z} - rest_offset;
+  }
+}
+
+void Skeleton::set_node_world_rotation(u32 sorted_index, const ran::Quatf32& world_rot) noexcept {
+  if (sorted_index >= (u32)_bones.size()) {
+    return;
+  }
+  auto& bn = _bones[sorted_index];
+  if (bn.parent_index < 0 || (u32)bn.parent_index >= (u32)_bones.size()) {
+    bn.local_rotation = ran::normalize(world_rot);
+  } else {
+    const auto& parent = _bones[(u32)bn.parent_index];
+    bn.local_rotation = ran::normalize(ran::inverse(parent.world_rotation) * world_rot);
+  }
+}
+
 i32 Skeleton::find_bone_index(std::string_view name) const noexcept {
   for (size_t i = 0; i < _bones.size(); ++i) {
     if (_bones[i].name_en == name || _bones[i].name_jp == name) {
@@ -382,6 +440,19 @@ const Skeleton::BoneNode& Skeleton::node(u32 sorted_index) const {
 Skeleton::BoneNode& Skeleton::node(u32 sorted_index) {
   miku_assert((size_t)sorted_index < _bones.size());
   return _bones[sorted_index];
+}
+
+std::string format_bone_label(const Skeleton::BoneNode& b, u32 index) {
+  if (!b.name_en.empty() && !b.name_jp.empty() && b.name_en != b.name_jp) {
+    return fmt::format("{} ({})", b.name_en, b.name_jp);
+  }
+  if (!b.name_en.empty()) {
+    return b.name_en;
+  }
+  if (!b.name_jp.empty()) {
+    return b.name_jp;
+  }
+  return fmt::format("Bone_{}", index);
 }
 
 } // namespace mikugl

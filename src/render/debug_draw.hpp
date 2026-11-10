@@ -32,7 +32,10 @@ public:
   DebugDraw& draw_line(const ran::Vec3f32& p0, const ran::Vec3f32& p1,
                        const ran::Vec4f32& color) noexcept;
   DebugDraw& draw_cross(const ran::Vec3f32& pos, f32 size, const ran::Vec4f32& color) noexcept;
-  DebugDraw& draw_skeleton(const Skeleton& skeleton, i32 selected_bone = -1) noexcept;
+  DebugDraw& draw_skeleton(const Skeleton& skeleton, i32 selected_bone = -1, i32 hovered_bone = -1,
+                           const ran::Mat4f32& model_matrix = ran::Mat4f32::identity()) noexcept;
+  DebugDraw& draw_point_light(const ran::Vec3f32& pos, const ran::Vec3f32& color, f32 radius,
+                              bool is_selected) noexcept;
   void render() noexcept;
 
 public:
